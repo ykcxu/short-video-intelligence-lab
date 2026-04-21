@@ -41,6 +41,52 @@
 
 `import-targets` 现支持 `csv/json/tsv`，并支持中文表头映射（如“主页链接/账号名/分类/部门”）。
 
+## 最短实操：扫码登录 + 一期批跑 + 周报生成
+
+下面给一条最短链路，优先保证一期抓取稳定可复现。
+
+### 1) session-capture（带 `--session-name`）典型流程
+
+```powershell
+# 第一步：打开浏览器扫码登录并落盘会话
+short-video-intel session-capture `
+  --session-name douyin-main `
+  --homepage-url https://www.douyin.com/ `
+  --wait-seconds 180
+
+# 第二步：后续命令复用同一会话
+short-video-intel --session-name douyin-main crawl-targets-batch --from-db --limit 5
+```
+
+### 2) 一期批跑（20 账号）示例
+
+```powershell
+short-video-intel run-phase1-batch `
+  --session-name douyin-main `
+  --from-db `
+  --limit 20 `
+  --with-video-detail `
+  --with-comments `
+  --comment-pages 3 `
+  --persist-db `
+  --output .\artifacts\phase1\phase1-batch-20.json
+```
+
+### 3) 周报生成示例（同时输出 JSON + Markdown）
+
+```powershell
+short-video-intel generate-weekly-report `
+  --input .\artifacts\phase1\phase1-batch-20.json `
+  --output-json .\artifacts\reports\weekly-2026w17.json `
+  --output-md .\artifacts\reports\weekly-2026w17.md
+```
+
+### 4) 一期 / 二期边界
+
+- 一期优先：抓取链路、落库、批跑稳定性。
+- 二期辅助：积极因素评分与视频适配分析，建立在一期产物之上。
+- 决策顺序：先修抓取与覆盖率，再扩展评分和适配规则。
+
 ## 一期数据收集 + 二期积极因素评分雏形操作手册
 
 这份手册按**一期优先收集数据、二期基于 `summary_block` 做积极因素评分**来组织。  

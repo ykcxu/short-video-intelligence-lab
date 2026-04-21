@@ -48,6 +48,35 @@
 3. 采集输出务必保留原始 JSON 和 `summary_block`，方便后续回放与评分。  
 4. 如果一期采集不稳定，先修采集完整性，不要先堆评分逻辑。
 
+### 最短实操链路（扫码登录 + 一期批跑 + 周报）
+
+```powershell
+# A. 先做扫码登录并保存会话
+short-video-intel session-capture `
+  --session-name douyin-main `
+  --homepage-url https://www.douyin.com/ `
+  --wait-seconds 180
+
+# B. 一期批跑（20 账号）
+short-video-intel run-phase1-batch `
+  --session-name douyin-main `
+  --from-db `
+  --limit 20 `
+  --with-video-detail `
+  --with-comments `
+  --comment-pages 3 `
+  --persist-db `
+  --output .\artifacts\phase1\phase1-batch-20.json
+
+# C. 生成周报（输出 json + md）
+short-video-intel generate-weekly-report `
+  --input .\artifacts\phase1\phase1-batch-20.json `
+  --output-json .\artifacts\reports\weekly-2026w17.json `
+  --output-md .\artifacts\reports\weekly-2026w17.md
+```
+
+> 核心边界：一期抓取优先（采集/落库/批跑稳定性）；二期评分与适配为辅助能力，只消费一期产物，不反向绑架一期采集节奏。
+
 ### 一期推荐命令
 
 ```powershell
