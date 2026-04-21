@@ -43,8 +43,8 @@ def score_accounts_from_summary(summary_block: dict) -> dict:
     for index, raw_account in enumerate(account_summary):
         account = _ensure_mapping(raw_account)
         videos_seen = _to_int(account.get("videos_seen"))
-        detail_success = _to_int(account.get("detail_success"))
-        comments_success = _to_int(account.get("comments_success"))
+        detail_success = _to_int(account.get("detail_meaningful", account.get("detail_success")))
+        comments_success = _to_int(account.get("comment_meaningful", account.get("comments_success")))
         warnings_count = _to_int(account.get("warnings_count"))
 
         activity_score = _score_activity(
@@ -192,8 +192,14 @@ def build_recommendations(scored: dict) -> list[dict]:
 
 def _build_baselines(accounts: list[dict], global_summary: dict) -> dict:
     videos_seen_values = [_to_int(_ensure_mapping(account).get("videos_seen")) for account in accounts]
-    detail_success_values = [_to_int(_ensure_mapping(account).get("detail_success")) for account in accounts]
-    comments_success_values = [_to_int(_ensure_mapping(account).get("comments_success")) for account in accounts]
+    detail_success_values = [
+        _to_int(_ensure_mapping(account).get("detail_meaningful", _ensure_mapping(account).get("detail_success")))
+        for account in accounts
+    ]
+    comments_success_values = [
+        _to_int(_ensure_mapping(account).get("comment_meaningful", _ensure_mapping(account).get("comments_success")))
+        for account in accounts
+    ]
     warnings_values = [_to_int(_ensure_mapping(account).get("warnings_count")) for account in accounts]
 
     return {
@@ -203,8 +209,8 @@ def _build_baselines(accounts: list[dict], global_summary: dict) -> dict:
         "max_comments_success": max(comments_success_values, default=0),
         "max_warnings_count": max(warnings_values, default=0),
         "global_video_total": _to_int(global_summary.get("video_total")),
-        "global_detail_success_count": _to_int(global_summary.get("detail_success_count")),
-        "global_comment_success_count": _to_int(global_summary.get("comment_success_count")),
+        "global_detail_success_count": _to_int(global_summary.get("detail_meaningful_count", global_summary.get("detail_success_count"))),
+        "global_comment_success_count": _to_int(global_summary.get("comment_meaningful_count", global_summary.get("comment_success_count"))),
         "global_failed_count": _to_int(global_summary.get("failed_count")),
         "global_detail_success_rate": _to_float(global_summary.get("detail_success_rate")),
         "global_comment_success_rate": _to_float(global_summary.get("comment_success_rate")),

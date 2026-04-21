@@ -4,12 +4,13 @@ import hashlib
 import ast
 import importlib
 import json
+import time
 from pathlib import Path
 from typing import Any
 
-from .browser.session_manager import capture_session_state, init_session_state
+from .browser.session_manager import capture_session_state, init_session_state, launch_debug_browser
 from .collector.comment_collector import collect_video_comments
-from .collector.homepage_collector import collect_homepage_videos
+from .collector.homepage_collector import collect_homepage_videos, collect_homepage_videos_via_cdp
 from .collector.target_source import load_targets_from_db, load_targets_from_file
 from .collector.targets_loader import load_targets_from_path
 from .collector.video_collector import collect_video_detail
@@ -212,12 +213,40 @@ class Orchestrator:
             result["notice"] = "[session-capture] 已保存 storage_state，可用于后续采集。"
         return result
 
+    def open_debug_homepage(
+        self,
+        session_name: str,
+        *,
+        homepage_url: str,
+        cdp_port: int = 9222,
+        hold_seconds: int = 1800,
+    ) -> dict[str, Any]:
+        self.bootstrap()
+        return launch_debug_browser(
+            self.config,
+            session_name,
+            homepage_url=homepage_url,
+            cdp_port=cdp_port,
+            hold_seconds=hold_seconds,
+        )
+
     def crawl_homepage(self, homepage_url: str, *, max_items: int = 50) -> dict[str, Any]:
         self.bootstrap()
         result = collect_homepage_videos(self.config, homepage_url=homepage_url, max_items=max_items)
         artifact_path = self._write_artifact(
             category="collector/homepage",
             stem=f"homepage_{self._hash_text(homepage_url)}",
+            payload=result,
+        )
+        result["artifact_path"] = str(artifact_path)
+        return result
+
+    def crawl_homepage_via_cdp(self, homepage_url: str, *, cdp_url: str, max_items: int = 50) -> dict[str, Any]:
+        self.bootstrap()
+        result = collect_homepage_videos_via_cdp(cdp_url, homepage_url=homepage_url, max_items=max_items)
+        artifact_path = self._write_artifact(
+            category="collector/homepage",
+            stem=f"homepage_cdp_{self._hash_text(homepage_url)}",
             payload=result,
         )
         result["artifact_path"] = str(artifact_path)
@@ -304,6 +333,8 @@ class Orchestrator:
         with_comments: bool = False,
         comment_pages: int = 3,
         persist_db: bool = False,
+        video_limit_per_target: int | None = None,
+        comment_video_limit_per_target: int | None = None,
     ) -> dict[str, Any]:
         self.bootstrap()
         targets = self._load_targets_for_batch(
@@ -322,6 +353,8 @@ class Orchestrator:
             comment_pages=comment_pages,
             max_items=max_items,
             max_workers=max_workers,
+            video_limit_per_target=video_limit_per_target,
+            comment_video_limit_per_target=comment_video_limit_per_target,
         )
         summary: dict[str, Any] = {
             "source": "db" if from_db else "file",
@@ -344,6 +377,187 @@ class Orchestrator:
             )
 
         return summary
+
+    def run_phase1_chunked(
+        self,
+        *,
+        source_file: str | Path | None = None,
+        input_format: str = "auto",
+        from_db: bool = False,
+        status: str = "active",
+        limit: int | None = None,
+        max_items: int = 50,
+        max_workers: int = 1,
+        comment_pages: int = 2,
+        persist_db: bool = True,
+        video_limit_per_target: int | None = None,
+        comment_video_limit_per_target: int | None = None,
+        chunk_size: int = 3,
+        pause_seconds: float = 0.0,
+    ) -> dict[str, Any]:
+        self.bootstrap()
+        targets = self._load_targets_for_batch(
+            source_file=source_file,
+            input_format=input_format,
+            from_db=from_db,
+            status=status,
+            limit=limit,
+        )
+        normalized_chunk_size = max(1, int(chunk_size))
+        chunks = [
+            targets[index : index + normalized_chunk_size]
+            for index in range(0, len(targets), normalized_chunk_size)
+        ]
+
+        chunk_reports: list[dict[str, Any]] = []
+        rerun_targets: list[dict[str, Any]] = []
+        total_success = 0
+        total_failed = 0
+        total_videos = 0
+        total_detail_meaningful = 0
+        total_comment_meaningful = 0
+
+        for chunk_index, chunk_targets in enumerate(chunks, start=1):
+            batch_result = run_batch_full_collect(
+                self.config,
+                targets=chunk_targets,
+                with_video_detail=True,
+                with_comments=True,
+                comment_pages=comment_pages,
+                max_items=max_items,
+                max_workers=max_workers,
+                video_limit_per_target=video_limit_per_target,
+                comment_video_limit_per_target=comment_video_limit_per_target,
+            )
+            chunk_payload: dict[str, Any] = {
+                "source": "db" if from_db else "file",
+                "chunk_index": chunk_index,
+                "chunk_size": len(chunk_targets),
+                "targets_loaded": len(chunk_targets),
+                "targets": [dict(target) for target in chunk_targets],
+                "batch": batch_result,
+                "summary": batch_result.get("summary_block", {}),
+            }
+            chunk_artifact_path = self._write_artifact(
+                category="collector/full-batch-chunks",
+                stem=f"phase1_chunk_{chunk_index:03d}",
+                payload=chunk_payload,
+            )
+            chunk_payload["artifact_path"] = str(chunk_artifact_path)
+
+            if persist_db:
+                chunk_payload["persistence"] = self._persist_full_batch_results(
+                    batch_result,
+                    raw_json_path=str(chunk_artifact_path),
+                )
+
+            global_summary = self._as_mapping(
+                self._as_mapping(chunk_payload.get("summary")).get("global_summary")
+            )
+            failures_in_chunk = list(batch_result.get("failures") or [])
+            failed_targets_in_chunk: list[dict[str, Any]] = []
+            for failure_item in failures_in_chunk:
+                failure_mapping = self._as_mapping(failure_item)
+                target_mapping = self._as_mapping(failure_mapping.get("target"))
+                if target_mapping:
+                    failed_targets_in_chunk.append(target_mapping)
+                    rerun_targets.append(dict(target_mapping))
+
+            total_success += int(batch_result.get("success_count") or 0)
+            total_failed += int(batch_result.get("failed_count") or 0)
+            total_videos += int(global_summary.get("video_total") or 0)
+            total_detail_meaningful += int(global_summary.get("detail_meaningful_count") or 0)
+            total_comment_meaningful += int(global_summary.get("comment_meaningful_count") or 0)
+            chunk_duration_sec = self._to_float(batch_result.get("duration_sec"))
+
+            chunk_status = "failed" if failures_in_chunk else "success"
+            chunk_reports.append(
+                {
+                    "chunk_index": chunk_index,
+                    "status": chunk_status,
+                    "chunk_size": len(chunk_targets),
+                    "artifact_path": str(chunk_artifact_path),
+                    "duration_sec": chunk_duration_sec,
+                    "success_count": int(batch_result.get("success_count") or 0),
+                    "failed_count": int(batch_result.get("failed_count") or 0),
+                    "video_total": int(global_summary.get("video_total") or 0),
+                    "detail_meaningful_count": int(global_summary.get("detail_meaningful_count") or 0),
+                    "comment_meaningful_count": int(global_summary.get("comment_meaningful_count") or 0),
+                    "failed_targets": failed_targets_in_chunk,
+                }
+            )
+
+            if pause_seconds > 0 and chunk_index < len(chunks):
+                time.sleep(max(0.0, float(pause_seconds)))
+
+        rerun_manifest_path: str | None = None
+        rerun_command_example: str | None = None
+        if rerun_targets:
+            rerun_manifest_payload = {
+                "mode": "phase1_chunked_rerun_manifest",
+                "source": "db" if from_db else "file",
+                "targets_loaded": len(rerun_targets),
+                "targets": rerun_targets,
+            }
+            rerun_manifest_artifact = self._write_artifact(
+                category="collector/full-batch-chunks",
+                stem="phase1_chunked_rerun_manifest",
+                payload=rerun_manifest_payload,
+            )
+            rerun_manifest_path = str(rerun_manifest_artifact)
+            rerun_command_example = self._build_phase1_rerun_command_example(
+                rerun_manifest_artifact,
+                comment_pages=comment_pages,
+                max_workers=max_workers,
+                video_limit_per_target=video_limit_per_target,
+                comment_video_limit_per_target=comment_video_limit_per_target,
+            )
+
+        slowest_chunks = sorted(
+            chunk_reports,
+            key=lambda item: self._to_float(item.get("duration_sec")),
+            reverse=True,
+        )[:5]
+
+        result: dict[str, Any] = {
+            "ok": True,
+            "mode": "phase1_chunked",
+            "source": "db" if from_db else "file",
+            "targets_loaded": len(targets),
+            "chunk_size": normalized_chunk_size,
+            "chunk_count": len(chunks),
+            "with_video_detail": True,
+            "with_comments": True,
+            "comment_pages": comment_pages,
+            "max_items": max_items,
+            "video_limit_per_target": video_limit_per_target,
+            "comment_video_limit_per_target": comment_video_limit_per_target,
+            "chunks": chunk_reports,
+            "summary": {
+                "success_count": total_success,
+                "failed_count": total_failed,
+                "video_total": total_videos,
+                "detail_meaningful_count": total_detail_meaningful,
+                "comment_meaningful_count": total_comment_meaningful,
+                "chunk_success_count": sum(1 for item in chunk_reports if item.get("status") == "success"),
+                "chunk_failed_count": sum(1 for item in chunk_reports if item.get("status") == "failed"),
+                "total_duration_sec": round(sum(self._to_float(item.get("duration_sec")) for item in chunk_reports), 6),
+            },
+            "failed_chunks": [item for item in chunk_reports if item.get("status") == "failed"],
+            "slowest_chunks": slowest_chunks,
+            "rerun_targets_count": len(rerun_targets),
+        }
+        if rerun_manifest_path is not None:
+            result["rerun_manifest_path"] = rerun_manifest_path
+        if rerun_command_example is not None:
+            result["rerun_command_example"] = rerun_command_example
+        artifact_path = self._write_artifact(
+            category="collector/full-batch",
+            stem="phase1_chunked_master",
+            payload=result,
+        )
+        result["artifact_path"] = str(artifact_path)
+        return result
 
     def create_download_jobs(
         self,
@@ -878,3 +1092,36 @@ class Orchestrator:
         from datetime import datetime, timezone
 
         return datetime.now(timezone.utc).isoformat()
+
+    def _to_float(self, value: Any) -> float:
+        try:
+            if value is None:
+                return 0.0
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _build_phase1_rerun_command_example(
+        self,
+        rerun_manifest_path: Path,
+        *,
+        comment_pages: int,
+        max_workers: int,
+        video_limit_per_target: int | None,
+        comment_video_limit_per_target: int | None,
+    ) -> str:
+        command_parts = [
+            "py -3.11 -X utf8 -m short_video_intel.cli",
+            f"--config {self.config.config_path}",
+            "run-phase1-batch",
+            f"--source-file {rerun_manifest_path}",
+            "--format json",
+            "--no-from-db",
+            f"--workers {max_workers}",
+            f"--comment-pages {comment_pages}",
+        ]
+        if video_limit_per_target is not None:
+            command_parts.append(f"--video-limit-per-target {video_limit_per_target}")
+        if comment_video_limit_per_target is not None:
+            command_parts.append(f"--comment-video-limit-per-target {comment_video_limit_per_target}")
+        return " ".join(str(part) for part in command_parts)

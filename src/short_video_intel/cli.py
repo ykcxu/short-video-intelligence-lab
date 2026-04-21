@@ -102,6 +102,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     session_capture_parser.set_defaults(func=_cmd_session_capture)
 
+    debug_homepage_parser = subparsers.add_parser(
+        "open-debug-homepage",
+        help="Open a debug browser with remote debugging enabled for manual page preparation.",
+    )
+    debug_homepage_parser.add_argument("--session-name", required=True, help="Session name to load storage_state from.")
+    debug_homepage_parser.add_argument("--homepage-url", required=True, help="Homepage URL to open.")
+    debug_homepage_parser.add_argument("--cdp-port", type=int, default=9222, help="Remote debugging port.")
+    debug_homepage_parser.add_argument("--hold-seconds", type=int, default=1800, help="How long to keep the browser open.")
+    debug_homepage_parser.set_defaults(func=_cmd_open_debug_homepage)
+
     crawl_homepage_parser = subparsers.add_parser(
         "crawl-homepage",
         help="Run homepage collection skeleton for one homepage URL.",
@@ -114,6 +124,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Target max items for collection (skeleton keeps this as a hint).",
     )
     crawl_homepage_parser.set_defaults(func=_cmd_crawl_homepage)
+
+    crawl_homepage_cdp_parser = subparsers.add_parser(
+        "crawl-homepage-cdp",
+        help="Capture a homepage from an already-open Chromium debug page via CDP.",
+    )
+    crawl_homepage_cdp_parser.add_argument("--homepage-url", required=True, help="Douyin homepage URL.")
+    crawl_homepage_cdp_parser.add_argument("--cdp-url", default="http://127.0.0.1:9222", help="CDP endpoint URL.")
+    crawl_homepage_cdp_parser.add_argument("--max-items", type=int, default=50, help="Target max items for extraction.")
+    crawl_homepage_cdp_parser.set_defaults(func=_cmd_crawl_homepage_cdp)
 
     crawl_video_parser = subparsers.add_parser(
         "crawl-video-detail",
@@ -268,6 +287,18 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Persist batch crawl results to DB via db.upsert helpers.",
     )
+    full_batch_parser.add_argument(
+        "--video-limit-per-target",
+        type=int,
+        default=None,
+        help="Optional cap on how many videos per homepage will run detail collection.",
+    )
+    full_batch_parser.add_argument(
+        "--comment-video-limit-per-target",
+        type=int,
+        default=None,
+        help="Optional cap on how many videos per homepage will run comment collection.",
+    )
     full_batch_parser.set_defaults(func=_cmd_crawl_targets_full_batch)
 
     phase1_batch_parser = subparsers.add_parser(
@@ -322,10 +353,40 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Requested comment pagination depth.",
     )
     phase1_batch_parser.add_argument(
+        "--video-limit-per-target",
+        type=int,
+        default=10,
+        help="Slow-net friendly cap: only enrich the first N videos per homepage for detail.",
+    )
+    phase1_batch_parser.add_argument(
+        "--comment-video-limit-per-target",
+        type=int,
+        default=5,
+        help="Slow-net friendly cap: only collect comments for the first N videos per homepage.",
+    )
+    phase1_batch_parser.add_argument(
+        "--browser-timeout-ms",
+        type=int,
+        default=None,
+        help="Optional temporary override for browser timeout during this run.",
+    )
+    phase1_batch_parser.add_argument(
         "--session-name",
         dest="command_session_name",
         default=None,
         help="Command-level session override (higher priority than global --session-name).",
+    )
+    phase1_batch_parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=None,
+        help="Optional: split targets into small batches of N accounts and emit one artifact per chunk.",
+    )
+    phase1_batch_parser.add_argument(
+        "--pause-seconds",
+        type=float,
+        default=0.0,
+        help="Optional pause between chunks for slow network environments.",
     )
     phase1_batch_parser.set_defaults(func=_cmd_run_phase1_batch)
 
@@ -434,8 +495,25 @@ def _cmd_session_capture(orchestrator: Orchestrator, args: argparse.Namespace) -
     )
 
 
+def _cmd_open_debug_homepage(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    return orchestrator.open_debug_homepage(
+        args.session_name,
+        homepage_url=args.homepage_url,
+        cdp_port=args.cdp_port,
+        hold_seconds=args.hold_seconds,
+    )
+
+
 def _cmd_crawl_homepage(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
     return orchestrator.crawl_homepage(args.homepage_url, max_items=args.max_items)
+
+
+def _cmd_crawl_homepage_cdp(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    return orchestrator.crawl_homepage_via_cdp(
+        args.homepage_url,
+        cdp_url=args.cdp_url,
+        max_items=args.max_items,
+    )
 
 
 def _cmd_crawl_video_detail(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
@@ -479,23 +557,49 @@ def _cmd_crawl_targets_full_batch(orchestrator: Orchestrator, args: argparse.Nam
         with_comments=args.with_comments,
         comment_pages=args.comment_pages,
         persist_db=args.persist_db,
+        video_limit_per_target=args.video_limit_per_target,
+        comment_video_limit_per_target=args.comment_video_limit_per_target,
     )
 
 
 def _cmd_run_phase1_batch(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
     from_db = args.from_db if args.from_db is not None else args.source_file is None
-    return orchestrator.crawl_targets_full_batch(
-        source_file=args.source_file,
-        input_format=args.format,
-        from_db=from_db,
-        status=args.status,
-        limit=args.limit,
-        max_workers=args.workers,
-        with_video_detail=True,
-        with_comments=True,
-        comment_pages=args.comment_pages,
-        persist_db=True,
-    )
+    original_timeout = orchestrator.config.browser.timeout_ms
+    try:
+        if args.browser_timeout_ms is not None and args.browser_timeout_ms > 0:
+            orchestrator.config.browser.timeout_ms = args.browser_timeout_ms
+        if args.chunk_size is not None and args.chunk_size > 0:
+            return orchestrator.run_phase1_chunked(
+                source_file=args.source_file,
+                input_format=args.format,
+                from_db=from_db,
+                status=args.status,
+                limit=args.limit,
+                max_items=args.max_items,
+                max_workers=args.workers,
+                comment_pages=args.comment_pages,
+                persist_db=True,
+                video_limit_per_target=args.video_limit_per_target,
+                comment_video_limit_per_target=args.comment_video_limit_per_target,
+                chunk_size=args.chunk_size,
+                pause_seconds=args.pause_seconds,
+            )
+        return orchestrator.crawl_targets_full_batch(
+            source_file=args.source_file,
+            input_format=args.format,
+            from_db=from_db,
+            status=args.status,
+            limit=args.limit,
+            max_workers=args.workers,
+            with_video_detail=True,
+            with_comments=True,
+            comment_pages=args.comment_pages,
+            persist_db=True,
+            video_limit_per_target=args.video_limit_per_target,
+            comment_video_limit_per_target=args.comment_video_limit_per_target,
+        )
+    finally:
+        orchestrator.config.browser.timeout_ms = original_timeout
 
 
 def _cmd_generate_weekly_report(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:

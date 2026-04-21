@@ -84,7 +84,7 @@ def run_playwright_homepage_probe(config: Any, homepage_url: str) -> dict[str, A
             page = context.new_page()
             response = page.goto(homepage_url, wait_until="domcontentloaded", timeout=timeout_ms)
             try:
-                page.wait_for_load_state("networkidle", timeout=min(timeout_ms, 8_000))
+                page.wait_for_load_state("networkidle", timeout=min(timeout_ms, 15_000))
             except Exception:
                 pass
             # Best-effort: switch to "作品" tab so video anchors are rendered.
@@ -102,13 +102,28 @@ def run_playwright_homepage_probe(config: Any, homepage_url: str) -> dict[str, A
                         break
                 except Exception:
                     continue
-            for _ in range(3):
+            best_html = page.content()
+            best_id_count = _count_embedded_video_ids(best_html)
+            idle_rounds = 0
+            max_rounds = 12
+            for round_index in range(max_rounds):
                 try:
-                    page.mouse.wheel(0, 1800)
-                    page.wait_for_timeout(400)
+                    page.wait_for_timeout(1_500 if round_index < 3 else 2_500)
+                    page.mouse.wheel(0, 2200)
+                    page.wait_for_timeout(1_000 if round_index < 4 else 1_800)
+                    current_html = page.content()
+                    current_id_count = _count_embedded_video_ids(current_html)
+                    if current_id_count > best_id_count:
+                        best_html = current_html
+                        best_id_count = current_id_count
+                        idle_rounds = 0
+                    else:
+                        idle_rounds += 1
+                    if best_id_count >= 12 or idle_rounds >= 4:
+                        break
                 except Exception:
                     break
-            page_html = page.content()
+            page_html = best_html
             try:
                 dom_hrefs = page.evaluate(
                     """() => {
@@ -153,6 +168,57 @@ def run_playwright_homepage_probe(config: Any, homepage_url: str) -> dict[str, A
                 launched_browser.close()
             except Exception:
                 pass
+
+
+def run_playwright_homepage_probe_via_cdp(cdp_url: str, homepage_url: str) -> dict[str, Any]:
+    if not detect_playwright():
+        raise RuntimeError("playwright is not installed")
+
+    from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.connect_over_cdp(cdp_url)
+        try:
+            target_page = None
+            for context in browser.contexts:
+                for page in context.pages:
+                    if homepage_url in (page.url or "") or "/user/" in (page.url or ""):
+                        target_page = page
+                        break
+                if target_page is not None:
+                    break
+            if target_page is None:
+                raise RuntimeError("no matching page found in connected browser")
+            try:
+                target_page.bring_to_front()
+            except Exception:
+                pass
+            try:
+                target_page.wait_for_load_state("networkidle", timeout=15_000)
+            except Exception:
+                pass
+            page_html = target_page.content()
+            try:
+                dom_hrefs = target_page.evaluate(
+                    """() => Array.from(document.querySelectorAll('a[href]')).map(a => (a.getAttribute('href') || '').trim()).filter(Boolean).slice(0, 4000)"""
+                )
+            except Exception:
+                dom_hrefs = []
+            return {
+                "homepage_url": homepage_url,
+                "final_url": target_page.url,
+                "title": target_page.title(),
+                "http_status": None,
+                "page_html": page_html,
+                "dom_hrefs": dom_hrefs,
+                "backend": "playwright/cdp",
+                "engine": "chromium",
+                "headless": False,
+                "timeout_ms": None,
+                "scanned_at": _now_iso(),
+            }
+        finally:
+            browser.close()
 
 
 def extract_video_candidates_from_html(html: str, homepage_url: str, max_items: int) -> list[dict[str, Any]]:
@@ -319,6 +385,21 @@ def _extract_keyed_video_id_candidates(search_space: str, only_aweme: bool = Fal
         if candidate_id:
             candidates.append(candidate_id)
     return candidates
+
+
+def _count_embedded_video_ids(search_space: str) -> int:
+    values: set[str] = set()
+    for match in _VIDEO_URL_RE.finditer(search_space):
+        video_id = match.group("video_id")
+        if _is_valid_video_id(video_id):
+            values.add(video_id.strip())
+    for candidate_id in _extract_aweme_id_candidates(search_space):
+        if _is_valid_video_id(candidate_id):
+            values.add(candidate_id.strip())
+    for candidate_id in _extract_keyed_video_id_candidates(search_space):
+        if _is_valid_video_id(candidate_id):
+            values.add(candidate_id.strip())
+    return len(values)
 
 
 def _is_valid_video_id(video_id: Any) -> bool:

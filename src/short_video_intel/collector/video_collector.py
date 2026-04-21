@@ -111,16 +111,26 @@ def _collect_with_playwright_detail(config: AppConfig, video_url: str) -> dict[s
             try:
                 page.goto(video_url, wait_until="domcontentloaded", timeout=timeout_ms)
                 try:
-                    page.wait_for_load_state("networkidle", timeout=min(timeout_ms, 5_000))
+                    page.wait_for_load_state("networkidle", timeout=min(timeout_ms, 8_000))
                 except PlaywrightTimeoutError:
                     warnings.append("networkidle timeout while probing video detail page")
-                page_html = page.content()
-                metrics, extraction_diagnostics, extraction_warnings = _extract_metrics_from_html(page_html)
+
+                page_html, body_text, wait_diagnostics = _wait_for_video_payload(
+                    page,
+                    timeout_ms=timeout_ms,
+                )
+                metrics, extraction_diagnostics, extraction_warnings = _extract_metrics_from_payload(
+                    page_html,
+                    body_text,
+                )
                 warnings.extend(extraction_warnings)
                 raw = {
                     "url": page.url,
                     "title": _safe_text(page.title()),
                     "page_content_length": len(page_html),
+                    "body_text_length": len(body_text),
+                    "body_text_preview": body_text[:1000],
+                    "wait_diagnostics": wait_diagnostics,
                     "extraction_diagnostics": extraction_diagnostics,
                 }
             finally:
@@ -168,9 +178,10 @@ _METRIC_KEY_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 _COUNT_VALUE_PATTERN = r"-?\d+(?:\.\d+)?(?:[,_]\d{3})*(?:\.\d+)?(?:\s*[万亿])?|-?\d+(?:\.\d+)?[万亿]"
+_BODY_COUNT_TOKEN_PATTERN = re.compile(r"(?<![\d:])\d+(?:\.\d+)?(?:万|亿)?(?![\d:])")
 
 
-def _extract_metrics_from_html(html: str) -> tuple[VideoMetrics, dict[str, Any], list[str]]:
+def _extract_metrics_from_payload(html: str, body_text: str) -> tuple[VideoMetrics, dict[str, Any], list[str]]:
     warnings: list[str] = []
     diagnostics: dict[str, Any] = {
         "source_count": 0,
@@ -185,6 +196,8 @@ def _extract_metrics_from_html(html: str) -> tuple[VideoMetrics, dict[str, Any],
             sources.append((f"script[{index}]", script_text, 0))
     if _looks_relevant(html):
         sources.append(("page_html", html, 1))
+    if body_text:
+        sources.append(("body_text", body_text, 2))
 
     diagnostics["source_count"] = len(sources)
     metrics = VideoMetrics()
@@ -230,7 +243,180 @@ def _extract_metrics_from_html(html: str) -> tuple[VideoMetrics, dict[str, Any],
         for source_name, source_text, source_rank in sources
     ]
 
+    text_metrics, text_diagnostics = _extract_metrics_from_body_text(body_text)
+    diagnostics["text_body"] = text_diagnostics
+    if text_diagnostics.get("matched"):
+        for metric_name in ("like_count", "comment_count", "share_count"):
+            if text_metrics.get(metric_name, 0) > 0:
+                setattr(metrics, metric_name, int(text_metrics[metric_name]))
+                metric_diag = diagnostics["metrics"].setdefault(metric_name, {})
+                metric_diag["selected_value"] = int(text_metrics[metric_name])
+                metric_diag["selected_source"] = "body_text_sequence"
+                metric_diag["selected_alias"] = "body_text_sequence"
+        if text_metrics.get("comment_count", 0) == 0:
+            metrics.comment_count = 0
+            metric_diag = diagnostics["metrics"].setdefault("comment_count", {})
+            metric_diag["selected_value"] = 0
+            metric_diag["selected_source"] = "body_text_sequence"
+            metric_diag["selected_alias"] = "body_text_sequence"
+        if not text_metrics.get("view_count", 0):
+            metrics.view_count = 0
+            metric_diag = diagnostics["metrics"].setdefault("view_count", {})
+            metric_diag["selected_value"] = 0
+            metric_diag["selected_source"] = "not_exposed_in_body_text"
+            metric_diag["selected_alias"] = "not_exposed_in_body_text"
+        if text_metrics.get("like_count", 0) > 0:
+            _zero_out_candidate_metric(diagnostics, "like_count")
+        if text_metrics.get("comment_count", 0) >= 0:
+            _zero_out_candidate_metric(diagnostics, "comment_count")
+        if text_metrics.get("share_count", 0) > 0:
+            _zero_out_candidate_metric(diagnostics, "share_count")
+    if metrics.view_count <= 0 and text_metrics.get("view_count", 0) > 0:
+        metrics.view_count = int(text_metrics["view_count"])
+        metric_diag = diagnostics["metrics"].setdefault("view_count", {})
+        metric_diag["selected_value"] = int(text_metrics["view_count"])
+        metric_diag["selected_source"] = "body_text_sequence"
+        metric_diag["selected_alias"] = "body_text_sequence"
+
     return metrics, diagnostics, warnings
+
+
+def _wait_for_video_payload(page: Any, *, timeout_ms: int) -> tuple[str, str, dict[str, Any]]:
+    poll_ms = 4_000
+    max_rounds = max(8, min(18, max(1, timeout_ms // poll_ms)))
+    best_html = ""
+    best_body = ""
+    best_score = -10**9
+    round_details: list[dict[str, Any]] = []
+
+    for round_index in range(max_rounds):
+        if round_index > 0:
+            try:
+                page.wait_for_timeout(poll_ms)
+            except Exception:
+                break
+        try:
+            current_html = page.content()
+        except Exception:
+            current_html = best_html
+        try:
+            current_body = page.inner_text("body")
+        except Exception:
+            current_body = best_body
+
+        score = _video_payload_score(current_html, current_body)
+        round_details.append(
+            {
+                "round": round_index,
+                "html_length": len(current_html),
+                "body_length": len(current_body),
+                "score": score,
+                "has_loading_text": ("视频数据加载中" in current_body) or ("加载中" in current_body),
+                "has_comment_block": "全部评论" in current_body,
+                "has_publish_time": "发布时间：" in current_body,
+            }
+        )
+
+        if score >= best_score:
+            best_html = current_html
+            best_body = current_body
+            best_score = score
+
+        if (
+            len(current_body) >= 1200
+            and ("全部评论" in current_body or "留下你的精彩评论吧" in current_body)
+            and "发布时间：" in current_body
+        ):
+            break
+
+    return best_html, best_body, {"rounds": round_details, "best_score": best_score}
+
+
+def _video_payload_score(html: str, body_text: str) -> int:
+    score = len(body_text)
+    if "全部评论" in body_text:
+        score += 1200
+    if "发布时间：" in body_text:
+        score += 900
+    if "举报" in body_text:
+        score += 400
+    if ("视频数据加载中" in body_text) or ("加载中" in body_text):
+        score -= 500
+    score += min(500, html.lower().count("comment"))
+    return score
+
+
+def _extract_metrics_from_body_text(body_text: str) -> tuple[dict[str, int], dict[str, Any]]:
+    diagnostics: dict[str, Any] = {
+        "count_tokens": [],
+        "window_preview": "",
+        "tail_preview": "",
+        "has_first_comment_marker": False,
+        "matched": False,
+    }
+    metrics = {
+        "view_count": 0,
+        "like_count": 0,
+        "comment_count": 0,
+        "share_count": 0,
+    }
+    text = _safe_text(body_text)
+    if not text:
+        return metrics, diagnostics
+
+    normalized = re.sub(r"\s+", " ", text)
+    if len(normalized) < 1000:
+        diagnostics["window_preview"] = normalized[:300]
+        return metrics, diagnostics
+    match = re.search(r"连播\s*(?P<section>.+?)(?:举报|发布时间：)", normalized)
+    if match:
+        section = match.group("section").strip()
+    else:
+        fallback_source = ""
+        if "发布时间：" in normalized:
+            publish_idx = normalized.find("发布时间：")
+            fallback_source = normalized[max(0, publish_idx - 220) : publish_idx]
+        elif "举报" in normalized:
+            report_idx = normalized.find("举报")
+            fallback_source = normalized[max(0, report_idx - 220) : report_idx]
+        if not fallback_source:
+            fallback_source = normalized[-220:]
+        section = fallback_source.strip()
+        diagnostics["fallback_window_used"] = True
+    if not section:
+        diagnostics["window_preview"] = normalized[:300]
+        return metrics, diagnostics
+    diagnostics["window_preview"] = section[:300]
+
+    tail_window = re.sub(r"\s+", " ", section[-240:])
+    diagnostics["tail_preview"] = tail_window
+    count_tokens = _BODY_COUNT_TOKEN_PATTERN.findall(tail_window)
+    diagnostics["count_tokens"] = count_tokens[-8:]
+    diagnostics["has_first_comment_marker"] = "抢首评" in tail_window
+
+    parsed = [_parse_count_value(token) for token in count_tokens[-4:]]
+    parsed = [value for value in parsed if value is not None]
+    if parsed:
+        diagnostics["matched"] = True
+        metrics["like_count"] = parsed[0]
+        if diagnostics["has_first_comment_marker"]:
+            metrics["comment_count"] = 0
+            metrics["share_count"] = parsed[-1] if len(parsed) >= 2 else 0
+        else:
+            metrics["comment_count"] = parsed[1] if len(parsed) >= 2 else 0
+            metrics["share_count"] = parsed[-1] if len(parsed) >= 3 else 0
+    return metrics, diagnostics
+
+
+def _zero_out_candidate_metric(diagnostics: dict[str, Any], metric_name: str) -> None:
+    metric_diag = diagnostics.get("metrics", {}).get(metric_name)
+    if not isinstance(metric_diag, dict):
+        return
+    source_breakdown = metric_diag.get("source_breakdown")
+    if isinstance(source_breakdown, dict):
+        for source_item in source_breakdown.values():
+            if isinstance(source_item, dict):
+                source_item["max_value"] = 0
 
 
 def _extract_script_blocks(html: str) -> list[str]:

@@ -81,6 +81,8 @@ def generate_weekly_report_from_full_batch(
                 "video_total": _safe_int(global_summary.get("video_total")),
                 "detail_success_count": _safe_int(global_summary.get("detail_success_count")),
                 "comment_success_count": _safe_int(global_summary.get("comment_success_count")),
+                "detail_meaningful_count": _safe_int(global_summary.get("detail_meaningful_count")),
+                "comment_meaningful_count": _safe_int(global_summary.get("comment_meaningful_count")),
                 "failed_count": _safe_int(global_summary.get("failed_count")),
                 "detail_success_rate": global_summary.get("detail_success_rate", 0),
                 "comment_success_rate": global_summary.get("comment_success_rate", 0),
@@ -517,6 +519,8 @@ def _build_weekly_report_markdown(
         f"- 视频总量：{_safe_int(global_block.get('video_total'))}",
         f"- 详情成功率：{global_block.get('detail_success_rate', 0)}",
         f"- 评论成功率：{global_block.get('comment_success_rate', 0)}",
+        f"- 有效详情数：{_safe_int(global_block.get('detail_meaningful_count'))}",
+        f"- 有效评论数：{_safe_int(global_block.get('comment_meaningful_count'))}",
         "",
         "## 账号TOP3",
     ]
@@ -549,6 +553,39 @@ def _build_weekly_report_markdown(
             f"- 匹配摘要：{json.dumps(video_fit_stats, ensure_ascii=False)}",
         ]
     )
+
+    failed_chunks = report_json.get("failed_chunks")
+    if isinstance(failed_chunks, list) and failed_chunks:
+        lines.extend(["", "## Chunk失败摘要"])
+        for item in failed_chunks[:10]:
+            if not isinstance(item, Mapping):
+                continue
+            lines.append(
+                "- chunk #{idx}：failed_count={failed}，artifact={artifact}".format(
+                    idx=_safe_int(item.get("chunk_index")),
+                    failed=_safe_int(item.get("failed_count")),
+                    artifact=_safe_text(item.get("artifact_path")),
+                )
+            )
+
+    slowest_chunks = report_json.get("slowest_chunks")
+    if isinstance(slowest_chunks, list) and slowest_chunks:
+        lines.extend(["", "## 慢Chunk TOP"])
+        for item in slowest_chunks[:5]:
+            if not isinstance(item, Mapping):
+                continue
+            lines.append(
+                "- chunk #{idx}：duration_sec={duration}，status={status}，artifact={artifact}".format(
+                    idx=_safe_int(item.get("chunk_index")),
+                    duration=item.get("duration_sec", 0),
+                    status=_safe_text(item.get("status")),
+                    artifact=_safe_text(item.get("artifact_path")),
+                )
+            )
+
+    rerun_command_example = report_json.get("rerun_command_example")
+    if isinstance(rerun_command_example, str) and rerun_command_example.strip():
+        lines.extend(["", "## 推荐重跑命令", "```powershell", rerun_command_example.strip(), "```"])
 
     if warnings:
         lines.extend(["", "## Warnings"])

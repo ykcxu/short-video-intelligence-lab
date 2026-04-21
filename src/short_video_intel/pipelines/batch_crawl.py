@@ -87,6 +87,8 @@ def run_batch_full_collect(
     comment_pages: int = 3,
     max_items: int = 50,
     max_workers: int = 1,
+    video_limit_per_target: int | None = None,
+    comment_video_limit_per_target: int | None = None,
 ) -> dict[str, Any]:
     """Run homepage, detail, and comment collection for a batch of targets."""
 
@@ -108,6 +110,8 @@ def run_batch_full_collect(
         with_video_detail=with_video_detail,
         with_comments=with_comments,
         comment_pages=normalized_comment_pages,
+        video_limit_per_target=video_limit_per_target,
+        comment_video_limit_per_target=comment_video_limit_per_target,
     )
 
     if max_workers == 1 or len(target_items) <= 1:
@@ -129,6 +133,8 @@ def run_batch_full_collect(
         with_comments=with_comments,
         comment_pages=normalized_comment_pages,
         max_items=max_items,
+        video_limit_per_target=video_limit_per_target,
+        comment_video_limit_per_target=comment_video_limit_per_target,
     )
 
     return {
@@ -145,6 +151,8 @@ def run_batch_full_collect(
         "with_comments": with_comments,
         "comment_pages": normalized_comment_pages,
         "max_items": max_items,
+        "video_limit_per_target": video_limit_per_target,
+        "comment_video_limit_per_target": comment_video_limit_per_target,
     }
 
 
@@ -233,6 +241,8 @@ def _build_full_batch_summary(
     with_comments: bool,
     comment_pages: int,
     max_items: int,
+    video_limit_per_target: int | None,
+    comment_video_limit_per_target: int | None,
 ) -> dict[str, Any]:
     account_summary: list[dict[str, Any]] = []
     total_videos_seen = 0
@@ -243,6 +253,8 @@ def _build_full_batch_summary(
     total_comment_items_seen = 0
     total_comment_entries_seen = 0
     total_comment_reply_entries_seen = 0
+    total_detail_meaningful = 0
+    total_comment_meaningful = 0
 
     for item in results:
         target = item.get("target") or {}
@@ -258,6 +270,8 @@ def _build_full_batch_summary(
         comment_items_seen = _safe_int(summary.get("comment_items_seen"))
         comment_entries_seen = _safe_int(summary.get("comment_entries_seen"))
         comment_reply_entries_seen = _safe_int(summary.get("comment_reply_entries_seen"))
+        detail_meaningful = _safe_int(summary.get("detail_meaningful"))
+        comment_meaningful = _safe_int(summary.get("comment_meaningful"))
         warnings_count = _count_full_batch_warnings(item)
 
         total_videos_seen += videos_seen
@@ -268,6 +282,8 @@ def _build_full_batch_summary(
         total_comment_items_seen += comment_items_seen
         total_comment_entries_seen += comment_entries_seen
         total_comment_reply_entries_seen += comment_reply_entries_seen
+        total_detail_meaningful += detail_meaningful
+        total_comment_meaningful += comment_meaningful
 
         account_summary.append(
             {
@@ -279,7 +295,11 @@ def _build_full_batch_summary(
                 "comment_items_seen": comment_items_seen,
                 "comment_entries_seen": comment_entries_seen,
                 "comment_reply_entries_seen": comment_reply_entries_seen,
+                "detail_meaningful": detail_meaningful,
+                "comment_meaningful": comment_meaningful,
                 "warnings_count": warnings_count,
+                "video_limit_per_target": video_limit_per_target,
+                "comment_video_limit_per_target": comment_video_limit_per_target,
                 "backend": homepage_result.get("backend"),
                 "extraction_version": homepage_result.get("extraction_version"),
             }
@@ -310,11 +330,15 @@ def _build_full_batch_summary(
             "comment_items_seen": total_comment_items_seen,
             "comment_entries_seen": total_comment_entries_seen,
             "comment_reply_entries_seen": total_comment_reply_entries_seen,
+            "detail_meaningful_count": total_detail_meaningful,
+            "comment_meaningful_count": total_comment_meaningful,
             "failed_count": len(failures),
             "with_video_detail": with_video_detail,
             "with_comments": with_comments,
             "comment_pages": comment_pages,
             "max_items": max_items,
+            "video_limit_per_target": video_limit_per_target,
+            "comment_video_limit_per_target": comment_video_limit_per_target,
         },
     }
 
@@ -327,6 +351,8 @@ def _collect_single_full_target(
     with_video_detail: bool,
     with_comments: bool,
     comment_pages: int,
+    video_limit_per_target: int | None,
+    comment_video_limit_per_target: int | None,
 ) -> dict[str, Any]:
     target_copy: dict[str, Any]
     try:
@@ -346,26 +372,46 @@ def _collect_single_full_target(
         comments_attempted = 0
         comments_succeeded = 0
         comments_failed = 0
+        detail_meaningful = 0
+        comment_meaningful = 0
         comment_items_seen = 0
         comment_entries_seen = 0
         comment_reply_entries_seen = 0
+
+        normalized_video_limit = _normalize_optional_limit(video_limit_per_target)
+        normalized_comment_limit = _normalize_optional_limit(comment_video_limit_per_target)
+        detail_budget_remaining = normalized_video_limit
+        comment_budget_remaining = normalized_comment_limit
 
         for candidate in videos:
             candidate_copy = _normalize_video_candidate(candidate)
             video_url = _extract_video_url(candidate_copy)
             item: dict[str, Any] = {"candidate": candidate_copy}
 
-            if with_video_detail and video_url:
+            allow_detail = with_video_detail and video_url and (
+                detail_budget_remaining is None or detail_budget_remaining > 0
+            )
+            if allow_detail:
                 detail_attempted += 1
                 try:
                     detail_result = collect_video_detail(config, video_url=video_url)
                     item["detail_result"] = detail_result
                     detail_succeeded += 1
+                    if _is_meaningful_detail_result(detail_result):
+                        detail_meaningful += 1
                 except Exception as exc:  # pragma: no cover - runtime safety fallback
                     item["detail_error"] = f"{type(exc).__name__}: {exc}"
                     detail_failed += 1
+                finally:
+                    if detail_budget_remaining is not None:
+                        detail_budget_remaining -= 1
+            elif with_video_detail and video_url:
+                item["detail_skipped"] = "video_limit_reached"
 
-            if with_comments and video_url:
+            allow_comments = with_comments and video_url and (
+                comment_budget_remaining is None or comment_budget_remaining > 0
+            )
+            if allow_comments:
                 comments_attempted += 1
                 try:
                     comments_result = collect_video_comments(
@@ -378,9 +424,16 @@ def _collect_single_full_target(
                     comment_items_seen += 1
                     comment_entries_seen += len(list((comments_result or {}).get("comments") or []))
                     comment_reply_entries_seen += len(list((comments_result or {}).get("replies") or []))
+                    if _is_meaningful_comment_result(comments_result):
+                        comment_meaningful += 1
                 except Exception as exc:  # pragma: no cover - runtime safety fallback
                     item["comments_error"] = f"{type(exc).__name__}: {exc}"
                     comments_failed += 1
+                finally:
+                    if comment_budget_remaining is not None:
+                        comment_budget_remaining -= 1
+            elif with_comments and video_url:
+                item["comments_skipped"] = "comment_video_limit_reached"
 
             video_items.append(item)
 
@@ -397,6 +450,8 @@ def _collect_single_full_target(
                 "comments_attempted": comments_attempted,
                 "comments_succeeded": comments_succeeded,
                 "comments_failed": comments_failed,
+                "detail_meaningful": detail_meaningful,
+                "comment_meaningful": comment_meaningful,
                 "comment_items_seen": comment_items_seen,
                 "comment_entries_seen": comment_entries_seen,
                 "comment_reply_entries_seen": comment_reply_entries_seen,
@@ -404,6 +459,8 @@ def _collect_single_full_target(
                 "with_comments": with_comments,
                 "comment_pages": comment_pages,
                 "max_items": max_items,
+                "video_limit_per_target": normalized_video_limit,
+                "comment_video_limit_per_target": normalized_comment_limit,
             },
         }
     except Exception as exc:  # pragma: no cover - batch safety fallback
@@ -486,6 +543,43 @@ def _count_full_batch_warnings(item: dict[str, Any]) -> int:
     return warning_count
 
 
+def _is_meaningful_detail_result(detail_result: Any) -> bool:
+    if not isinstance(detail_result, dict):
+        return False
+    metrics = detail_result.get("metrics")
+    if isinstance(metrics, dict):
+        for key in ("like_count", "comment_count", "share_count", "view_count"):
+            value = metrics.get(key)
+            if isinstance(value, (int, float)) and int(value) > 0:
+                return True
+    raw = detail_result.get("raw")
+    if isinstance(raw, dict):
+        text_diag = raw.get("extraction_diagnostics")
+        if isinstance(text_diag, dict):
+            text_body = text_diag.get("text_body")
+            if isinstance(text_body, dict) and text_body.get("matched"):
+                return True
+    backend = str(detail_result.get("backend") or "")
+    return backend.startswith("playwright:")
+
+
+def _is_meaningful_comment_result(comments_result: Any) -> bool:
+    if not isinstance(comments_result, dict):
+        return False
+    comments = comments_result.get("comments")
+    if isinstance(comments, list) and len(comments) > 0:
+        return True
+    scan_meta = comments_result.get("scan_meta")
+    if isinstance(scan_meta, dict):
+        backend = str(scan_meta.get("backend") or "")
+        stop_reason = str(scan_meta.get("stop_reason") or "")
+        if backend == "playwright:body_text-v1":
+            return True
+        if stop_reason == "body_text_comments_captured":
+            return True
+    return False
+
+
 def _safe_int(value: Any, *, default: int = 0) -> int:
     try:
         if value is None:
@@ -493,6 +587,18 @@ def _safe_int(value: Any, *, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _normalize_optional_limit(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return None
+    if normalized <= 0:
+        return None
+    return normalized
 
 
 def _now_iso() -> str:

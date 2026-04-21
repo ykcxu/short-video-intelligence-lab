@@ -9,6 +9,7 @@ from ..browser.page_runtime import (
     detect_playwright,
     extract_video_candidates_with_diagnostics,
     run_playwright_homepage_probe,
+    run_playwright_homepage_probe_via_cdp,
 )
 
 
@@ -112,6 +113,39 @@ def collect_homepage_videos(config: Any, homepage_url: str, max_items: int = 50)
         "diagnostics": diagnostics,
         "extraction_version": diagnostics.get("extraction_version", "homepage-extract.v2"),
         "warnings": warnings,
+    }
+
+
+def collect_homepage_videos_via_cdp(cdp_url: str, homepage_url: str, max_items: int = 50) -> dict[str, Any]:
+    normalized_homepage_url = _normalize_homepage_url(homepage_url)
+    scanned_at = _now_iso()
+
+    probe = run_playwright_homepage_probe_via_cdp(cdp_url, normalized_homepage_url)
+    html_blob = probe.get("page_html", "") or ""
+    dom_hrefs = probe.get("dom_hrefs") if isinstance(probe.get("dom_hrefs"), list) else []
+    if dom_hrefs:
+        html_blob = f"{html_blob}\n" + "\n".join(str(item) for item in dom_hrefs)
+    extraction = extract_video_candidates_with_diagnostics(
+        html_blob,
+        probe.get("final_url", normalized_homepage_url),
+        max_items=max_items,
+    )
+    videos = extraction["videos"]
+    diagnostics = extraction["diagnostics"]
+    return {
+        "backend": "playwright/cdp-regex",
+        "homepage_url": normalized_homepage_url,
+        "scanned_at": scanned_at,
+        "videos": videos,
+        "diagnostics": diagnostics,
+        "extraction_version": diagnostics.get("extraction_version", "homepage-extract.v2"),
+        "warnings": [
+            "homepage captured from existing cdp browser page",
+            f"final_url={probe.get('final_url')!r}",
+            f"dom_href_count={len(dom_hrefs)}",
+            f"extracted_count={len(videos)}",
+            f"max_items={max_items}",
+        ],
     }
 
 

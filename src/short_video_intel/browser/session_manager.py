@@ -124,6 +124,82 @@ def capture_session_state(
     }
 
 
+def launch_debug_browser(
+    config: AppConfig,
+    session_name: str,
+    homepage_url: str = "https://www.douyin.com/",
+    *,
+    cdp_port: int = 9222,
+    hold_seconds: int = 1800,
+) -> dict[str, Any]:
+    session_name = _normalize_session_name(session_name)
+    state_path = config.data_dir / "sessions" / session_name / "state.json"
+    warnings: list[str] = []
+
+    if not detect_playwright():
+        return {
+            "ok": False,
+            "reason": "no_playwright",
+            "session_name": session_name,
+            "state_path": str(state_path),
+            "cdp_url": f"http://127.0.0.1:{cdp_port}",
+            "warnings": warnings,
+        }
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:  # pragma: no cover
+        return {
+            "ok": False,
+            "reason": "no_playwright",
+            "session_name": session_name,
+            "state_path": str(state_path),
+            "cdp_url": f"http://127.0.0.1:{cdp_port}",
+            "warnings": [f"playwright import failed: {type(exc).__name__}: {exc}"],
+        }
+
+    hold_seconds = max(0, int(hold_seconds))
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                headless=False,
+                args=[f"--remote-debugging-port={int(cdp_port)}"],
+            )
+            context = browser.new_context(
+                locale=getattr(config.browser, "locale", "zh-CN"),
+                storage_state=str(state_path) if state_path.exists() else None,
+            )
+            page = context.new_page()
+            try:
+                page.goto(homepage_url, wait_until="domcontentloaded", timeout=config.browser.timeout_ms)
+            except Exception as exc:  # pragma: no cover
+                warnings.append(f"page.goto failed: {type(exc).__name__}: {exc}")
+            warnings.append(f"debug browser listening on http://127.0.0.1:{int(cdp_port)}")
+            warnings.append(f"holding browser for {hold_seconds} seconds")
+            if hold_seconds > 0:
+                time.sleep(hold_seconds)
+            context.close()
+            browser.close()
+    except Exception as exc:  # pragma: no cover
+        return {
+            "ok": False,
+            "reason": "debug_browser_failed",
+            "error": f"{type(exc).__name__}: {exc}",
+            "session_name": session_name,
+            "state_path": str(state_path),
+            "cdp_url": f"http://127.0.0.1:{int(cdp_port)}",
+            "warnings": warnings,
+        }
+
+    return {
+        "ok": True,
+        "session_name": session_name,
+        "state_path": str(state_path),
+        "cdp_url": f"http://127.0.0.1:{int(cdp_port)}",
+        "warnings": warnings,
+    }
+
+
 def init_session_state(config: AppConfig, session_name: str) -> dict[str, Any]:
     session_name = _normalize_session_name(session_name)
     sessions_dir = config.data_dir / "sessions" / session_name

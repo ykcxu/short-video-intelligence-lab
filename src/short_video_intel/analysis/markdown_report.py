@@ -116,8 +116,8 @@ def _render_account_table(accounts: list[dict[str, Any]]) -> list[str]:
                 interaction=_to_int(account.get("interaction_score")),
                 stability=_to_int(account.get("stability_score")),
                 videos=_to_int(account.get("videos_seen")),
-                detail=_to_int(account.get("detail_success")),
-                comments=_to_int(account.get("comments_success")),
+                detail=_to_int(account.get("detail_meaningful", account.get("detail_success"))),
+                comments=_to_int(account.get("comment_meaningful", account.get("comments_success"))),
             )
         )
     return lines
@@ -164,6 +164,8 @@ def _summary_items(summary: Mapping[str, Any]) -> list[tuple[str, Any]]:
         ("video_total", "视频总数"),
         ("detail_success_count", "详情成功数"),
         ("comment_success_count", "评论成功数"),
+        ("detail_meaningful_count", "有效详情数"),
+        ("comment_meaningful_count", "有效评论数"),
         ("failed_count", "失败数"),
         ("detail_success_rate", "详情成功率"),
         ("comment_success_rate", "评论成功率"),
