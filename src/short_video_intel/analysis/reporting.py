@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -12,6 +13,106 @@ FULL_BATCH_ARTIFACT_SUBDIR = Path("collector") / "full-batch"
 
 class AnalysisError(Exception):
     """Structured analysis failure used by the CLI wrapper."""
+
+
+def generate_weekly_report_from_full_batch(
+    *,
+    workspace: Path,
+    artifacts_dir: Path,
+    artifact: Path | None = None,
+) -> dict[str, Any]:
+    """Generate a structured weekly report (JSON + Markdown) from a full-batch artifact."""
+
+    try:
+        resolved_artifact = _resolve_artifact_path(
+            workspace=workspace,
+            artifacts_dir=artifacts_dir,
+            artifact=artifact,
+        )
+        payload = _load_json(resolved_artifact)
+        summary_block = _extract_summary_block(payload)
+        scored = score_accounts_from_summary(summary_block)
+        recommendations = build_recommendations(scored)
+        generated_at = _safe_text(scored.get("generated_at")) or datetime.now(UTC).isoformat()
+
+        score_block = _build_score_block(scored)
+        accounts = list(scored.get("accounts") or [])
+        top_accounts = list(score_block.get("top_accounts") or [])
+        global_summary = _as_dict(scored.get("global_summary"))
+        warnings: list[str] = []
+
+        video_fit_summary: dict[str, Any] = {
+            "enabled": True,
+            "ok": False,
+            "total_videos": 0,
+            "summary": {},
+            "top_videos": [],
+        }
+        try:
+            video_fit_result = analyze_video_fit_from_full_batch(
+                workspace=workspace,
+                artifacts_dir=artifacts_dir,
+                artifact=resolved_artifact,
+                output=None,
+            )
+            if video_fit_result.get("ok"):
+                fit_payload = _as_dict(video_fit_result.get("result"))
+                fit_summary = _as_dict(fit_payload.get("summary"))
+                fit_results = [item for item in list(fit_payload.get("results") or []) if isinstance(item, Mapping)]
+                video_fit_summary = {
+                    "enabled": True,
+                    "ok": True,
+                    "total_videos": _safe_int(video_fit_result.get("total_videos")),
+                    "summary": fit_summary,
+                    "top_videos": [dict(item) for item in fit_results[:5]],
+                }
+            else:
+                warnings.append(_safe_text(_mapping_get(video_fit_result.get("error"), "message")) or "video fit analysis failed")
+        except Exception as exc:  # pragma: no cover - defensive wrapper
+            warnings.append(f"video fit analysis failed: {type(exc).__name__}: {exc}")
+
+        report_json = {
+            "global": {
+                "generated_at": generated_at,
+                "artifact_path": str(resolved_artifact),
+                "scoring_version": _safe_text(score_block.get("scoring_version")),
+                "overall_score": _safe_int(score_block.get("overall")),
+                "account_count": len(accounts),
+                "video_total": _safe_int(global_summary.get("video_total")),
+                "detail_success_count": _safe_int(global_summary.get("detail_success_count")),
+                "comment_success_count": _safe_int(global_summary.get("comment_success_count")),
+                "failed_count": _safe_int(global_summary.get("failed_count")),
+                "detail_success_rate": global_summary.get("detail_success_rate", 0),
+                "comment_success_rate": global_summary.get("comment_success_rate", 0),
+            },
+            "account": {
+                "top_accounts": top_accounts,
+                "accounts": accounts,
+            },
+            "recommendations": recommendations,
+            "video_fit_summary": video_fit_summary,
+        }
+        if warnings:
+            report_json["warnings"] = warnings
+
+        report_markdown = _build_weekly_report_markdown(
+            report_json=report_json,
+            recommendations=recommendations,
+            warnings=warnings,
+        )
+
+        return {
+            "ok": True,
+            "analysis_type": "weekly_report",
+            "artifact_path": str(resolved_artifact),
+            "generated_at": generated_at,
+            "report_json": report_json,
+            "report_markdown": report_markdown,
+        }
+    except AnalysisError as exc:
+        return _error_result_weekly_report(exc)
+    except Exception as exc:  # pragma: no cover - defensive wrapper
+        return _error_result_weekly_report(AnalysisError(f"{type(exc).__name__}: {exc}"))
 
 
 def analyze_positive_factors(
@@ -362,6 +463,26 @@ def _error_result(exc: AnalysisError, *, analysis_type: str = "positive_factors"
     }
 
 
+def _error_result_weekly_report(exc: AnalysisError) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "analysis_type": "weekly_report",
+        "artifact_path": None,
+        "generated_at": None,
+        "report_json": {
+            "global": {},
+            "account": {"top_accounts": [], "accounts": []},
+            "recommendations": [],
+            "video_fit_summary": {"enabled": True, "ok": False, "total_videos": 0, "summary": {}, "top_videos": []},
+        },
+        "report_markdown": "",
+        "error": {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        },
+    }
+
+
 def _as_dict(value: Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return dict(value)
@@ -372,3 +493,66 @@ def _safe_text(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _build_weekly_report_markdown(
+    *,
+    report_json: Mapping[str, Any],
+    recommendations: list[dict[str, Any]],
+    warnings: list[str],
+) -> str:
+    global_block = _as_dict(report_json.get("global"))
+    account_block = _as_dict(report_json.get("account"))
+    top_accounts = [item for item in list(account_block.get("top_accounts") or []) if isinstance(item, Mapping)]
+    video_fit_summary = _as_dict(report_json.get("video_fit_summary"))
+    video_fit_stats = _as_dict(video_fit_summary.get("summary"))
+
+    lines = [
+        "# 周报（short_video_intel）",
+        "",
+        "## 全局概览",
+        f"- 生成时间：{_safe_text(global_block.get('generated_at'))}",
+        f"- 总体评分：{_safe_int(global_block.get('overall_score'))}",
+        f"- 账号数：{_safe_int(global_block.get('account_count'))}",
+        f"- 视频总量：{_safe_int(global_block.get('video_total'))}",
+        f"- 详情成功率：{global_block.get('detail_success_rate', 0)}",
+        f"- 评论成功率：{global_block.get('comment_success_rate', 0)}",
+        "",
+        "## 账号TOP3",
+    ]
+    if top_accounts:
+        for item in top_accounts[:3]:
+            lines.append(
+                f"- #{_safe_int(item.get('rank'))} {_safe_text(item.get('source_name'))}：总分 {_safe_int(item.get('total_score'))}"
+            )
+    else:
+        lines.append("- 暂无账号评分结果")
+
+    lines.extend(["", "## 建议（优先级排序）"])
+    if recommendations:
+        for rec in recommendations[:10]:
+            actions = list(rec.get("actions") or [])
+            lines.append(
+                f"- [{_safe_text(rec.get('priority'))}] {_safe_text(rec.get('source_name') or rec.get('title'))}：{_safe_text(rec.get('reason'))}"
+            )
+            for action in actions[:3]:
+                lines.append(f"  - {action}")
+    else:
+        lines.append("- 暂无建议")
+
+    lines.extend(
+        [
+            "",
+            "## 视频匹配（可选融合）",
+            f"- 融合状态：{'ok' if video_fit_summary.get('ok') else 'failed'}",
+            f"- 样本数：{_safe_int(video_fit_summary.get('total_videos'))}",
+            f"- 匹配摘要：{json.dumps(video_fit_stats, ensure_ascii=False)}",
+        ]
+    )
+
+    if warnings:
+        lines.extend(["", "## Warnings"])
+        for warning in warnings:
+            lines.append(f"- {warning}")
+
+    return "\n".join(lines).strip() + "\n"
