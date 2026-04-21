@@ -10,10 +10,12 @@ from typing import Any
 from .browser.session_manager import init_session_state
 from .collector.comment_collector import collect_video_comments
 from .collector.homepage_collector import collect_homepage_videos
+from .collector.target_source import load_targets_from_db, load_targets_from_file
 from .collector.targets_loader import load_targets_from_path
 from .collector.video_collector import collect_video_detail
 from .config import AppConfig
 from .downloader import build_download_jobs, run_download_jobs
+from .pipelines import run_batch_homepage_crawl
 
 
 class Orchestrator:
@@ -197,6 +199,50 @@ class Orchestrator:
         result["artifact_path"] = str(artifact_path)
         return result
 
+    def crawl_targets_batch(
+        self,
+        *,
+        source_file: str | Path | None = None,
+        input_format: str = "auto",
+        from_db: bool = False,
+        status: str = "active",
+        limit: int | None = None,
+        max_items: int = 50,
+        max_workers: int = 1,
+        persist_db: bool = False,
+    ) -> dict[str, Any]:
+        self.bootstrap()
+        targets = self._load_targets_for_batch(
+            source_file=source_file,
+            input_format=input_format,
+            from_db=from_db,
+            status=status,
+            limit=limit,
+        )
+
+        batch_result = run_batch_homepage_crawl(
+            self.config,
+            targets=targets,
+            max_items=max_items,
+            max_workers=max_workers,
+        )
+        summary: dict[str, Any] = {
+            "source": "db" if from_db else "file",
+            "targets_loaded": len(targets),
+            "batch": batch_result,
+        }
+
+        if persist_db:
+            summary["persistence"] = self._persist_batch_results(batch_result)
+
+        artifact_path = self._write_artifact(
+            category="collector/batch",
+            stem="batch_homepage_crawl",
+            payload=summary,
+        )
+        summary["artifact_path"] = str(artifact_path)
+        return summary
+
     def create_download_jobs(
         self,
         *,
@@ -300,6 +346,74 @@ class Orchestrator:
                 return [str(item) for item in parsed]
             return [str(parsed)]
         return [str(value)]
+
+    def _load_targets_for_batch(
+        self,
+        *,
+        source_file: str | Path | None,
+        input_format: str,
+        from_db: bool,
+        status: str,
+        limit: int | None,
+    ) -> list[dict[str, Any]]:
+        if from_db:
+            return load_targets_from_db(
+                self.config.database_url,
+                status=status,
+                limit=limit,
+            )
+        if source_file is None:
+            raise ValueError("source_file is required when from_db is False")
+        return load_targets_from_file(source_file, input_format=input_format)
+
+    def _persist_batch_results(self, batch_result: dict[str, Any]) -> dict[str, Any]:
+        db_api = self._load_db_api()
+        if db_api is None or not hasattr(db_api, "get_session") or not hasattr(
+            db_api, "persist_homepage_crawl_result"
+        ):
+            return {
+                "enabled": True,
+                "backend": "unavailable",
+                "persisted_count": 0,
+                "failed_count": 0,
+                "failures": ["db upsert helpers unavailable"],
+            }
+
+        persisted_count = 0
+        failed_count = 0
+        persistence_items: list[dict[str, Any]] = []
+        failures: list[dict[str, Any]] = []
+        with db_api.get_session(self.config.database_url) as session:
+            for item in batch_result.get("results", []):
+                target = item.get("target", {})
+                crawl_result = item.get("crawl_result", {})
+                raw_json_path = crawl_result.get("artifact_path") if isinstance(crawl_result, dict) else None
+                try:
+                    row = db_api.persist_homepage_crawl_result(
+                        session,
+                        target,
+                        crawl_result,
+                        raw_json_path=raw_json_path,
+                    )
+                    persistence_items.append(row)
+                    persisted_count += 1
+                except Exception as exc:  # pragma: no cover - runtime safety
+                    failed_count += 1
+                    failures.append(
+                        {
+                            "homepage_url": target.get("homepage_url"),
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+                    )
+
+        return {
+            "enabled": True,
+            "backend": "db-module",
+            "persisted_count": persisted_count,
+            "failed_count": failed_count,
+            "items": persistence_items,
+            "failures": failures,
+        }
 
     def _write_artifact(self, *, category: str, stem: str, payload: dict[str, Any]) -> Path:
         category_path = self.config.artifacts_dir / category

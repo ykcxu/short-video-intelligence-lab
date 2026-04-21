@@ -35,6 +35,8 @@
 - `short-video-intel crawl-video-detail --video-url <url>`
 - `short-video-intel crawl-video-comments --video-url <url>`
 - `short-video-intel build-download-jobs --videos-file videos.json --run`
+- `short-video-intel crawl-targets-batch --source-file inputs/douyin_homepages_seed.tsv --workers 2`
+- `short-video-intel crawl-targets-batch --from-db --limit 20 --persist-db`
 
 `import-targets` 现支持 `csv/json/tsv`，并支持中文表头映射（如“主页链接/账号名/分类/部门”）。
 

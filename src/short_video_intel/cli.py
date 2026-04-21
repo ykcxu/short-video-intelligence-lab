@@ -121,6 +121,57 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     download_jobs_parser.set_defaults(func=_cmd_build_download_jobs)
 
+    batch_parser = subparsers.add_parser(
+        "crawl-targets-batch",
+        help="Batch crawl homepage targets from file or DB.",
+    )
+    batch_parser.add_argument(
+        "--source-file",
+        type=Path,
+        default=None,
+        help="Target source file (csv/tsv/json). Required unless --from-db is set.",
+    )
+    batch_parser.add_argument(
+        "--format",
+        choices=("auto", "csv", "tsv", "json"),
+        default="auto",
+        help="Input format for --source-file.",
+    )
+    batch_parser.add_argument(
+        "--from-db",
+        action="store_true",
+        help="Load targets from DB instead of file.",
+    )
+    batch_parser.add_argument(
+        "--status",
+        default="active",
+        help="DB mode: filter by target status.",
+    )
+    batch_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="DB mode: optional limit.",
+    )
+    batch_parser.add_argument(
+        "--max-items",
+        type=int,
+        default=50,
+        help="Per homepage max extracted videos.",
+    )
+    batch_parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Batch worker count (ThreadPool).",
+    )
+    batch_parser.add_argument(
+        "--persist-db",
+        action="store_true",
+        help="Persist batch crawl results to DB via db.upsert helpers.",
+    )
+    batch_parser.set_defaults(func=_cmd_crawl_targets_batch)
+
     return parser
 
 
@@ -157,6 +208,19 @@ def _cmd_build_download_jobs(orchestrator: Orchestrator, args: argparse.Namespac
         videos_file=args.videos_file,
         output_dir=args.output_dir,
         run=args.run,
+    )
+
+
+def _cmd_crawl_targets_batch(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    return orchestrator.crawl_targets_batch(
+        source_file=args.source_file,
+        input_format=args.format,
+        from_db=args.from_db,
+        status=args.status,
+        limit=args.limit,
+        max_items=args.max_items,
+        max_workers=args.workers,
+        persist_db=args.persist_db,
     )
 
 
