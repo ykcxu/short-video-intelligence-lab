@@ -97,6 +97,10 @@ class Video(Base):
         back_populates="video",
         cascade="all, delete-orphan",
     )
+    comments: Mapped[list[Comment]] = relationship(
+        back_populates="video",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         Index("ix_videos_target_video_id", "target_id", "video_id"),
@@ -126,4 +130,76 @@ class VideoSnapshot(Base):
 
     __table_args__ = (
         Index("ix_video_snapshots_video_snapshot_at", "video_id_fk", "snapshot_at"),
+    )
+
+
+class Comment(Base, TimestampMixin):
+    __tablename__ = "comments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    video_id_fk: Mapped[int] = mapped_column(ForeignKey("videos.id"), nullable=False, index=True)
+    comment_platform_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    nickname: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    like_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    reply_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    comment_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_author: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        nullable=False,
+    )
+    raw_json_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    unique_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    video: Mapped[Video] = relationship(back_populates="comments")
+    replies: Mapped[list[CommentReply]] = relationship(
+        back_populates="comment",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("ix_comments_video_comment_platform_id", "video_id_fk", "comment_platform_id"),
+        Index("ix_comments_video_unique_hash", "video_id_fk", "unique_hash"),
+    )
+
+
+class CommentReply(Base, TimestampMixin):
+    __tablename__ = "comment_replies"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    comment_id_fk: Mapped[int] = mapped_column(ForeignKey("comments.id"), nullable=False, index=True)
+    reply_platform_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    nickname: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    like_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    reply_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        nullable=False,
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        nullable=False,
+    )
+    raw_json_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    unique_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    comment: Mapped[Comment] = relationship(back_populates="replies")
+
+    __table_args__ = (
+        Index("ix_comment_replies_comment_reply_platform_id", "comment_id_fk", "reply_platform_id"),
+        Index("ix_comment_replies_comment_unique_hash", "comment_id_fk", "unique_hash"),
     )

@@ -478,7 +478,13 @@ class Orchestrator:
         raw_json_path: str | None = None,
     ) -> dict[str, Any]:
         db_api = self._load_db_api()
-        required_attrs = ("get_session", "persist_homepage_crawl_result", "upsert_video_from_candidate", "insert_video_snapshot")
+        required_attrs = (
+            "get_session",
+            "persist_homepage_crawl_result",
+            "upsert_video_from_candidate",
+            "insert_video_snapshot",
+        )
+        comment_persist_helper = getattr(db_api, "persist_video_comments_result", None) if db_api is not None else None
         if db_api is None or any(not hasattr(db_api, attr) for attr in required_attrs):
             return {
                 "enabled": True,
@@ -486,6 +492,8 @@ class Orchestrator:
                 "homepage_persisted_count": 0,
                 "detail_snapshots_inserted": 0,
                 "comment_results_seen": 0,
+                "comments_persisted_count": 0,
+                "comment_replies_persisted_count": 0,
                 "failed_count": 0,
                 "failures": ["db upsert helpers unavailable"],
             }
@@ -493,6 +501,8 @@ class Orchestrator:
         homepage_persisted_count = 0
         detail_snapshots_inserted = 0
         comment_results_seen = 0
+        comments_persisted_count = 0
+        comment_replies_persisted_count = 0
         failed_count = 0
         failures: list[dict[str, Any]] = []
         persistence_items: list[dict[str, Any]] = []
@@ -521,6 +531,8 @@ class Orchestrator:
                             "homepage_persisted": True,
                             "detail_snapshots_inserted": 0,
                             "comment_results_seen": 0,
+                            "comments_persisted_count": 0,
+                            "comment_replies_persisted_count": 0,
                         }
                     )
                     homepage_persisted_count += 1
@@ -537,17 +549,21 @@ class Orchestrator:
                 homepage_target_id = homepage_summary["homepage_target_id"]
                 item_detail_snapshots = 0
                 item_comment_results_seen = 0
+                item_comments_persisted = 0
+                item_comment_replies_persisted = 0
 
                 for video_item in item.get("video_items", []):
                     candidate = video_item.get("candidate") or {}
                     detail_result = video_item.get("detail_result")
                     comments_result = video_item.get("comments_result")
+                    has_detail_result = isinstance(detail_result, dict)
+                    has_comments_result = isinstance(comments_result, dict)
 
-                    if isinstance(comments_result, dict):
+                    if has_comments_result:
                         item_comment_results_seen += 1
                         comment_results_seen += 1
 
-                    if not isinstance(detail_result, dict):
+                    if not has_detail_result and not has_comments_result:
                         continue
 
                     try:
@@ -557,30 +573,51 @@ class Orchestrator:
                             candidate=candidate if isinstance(candidate, dict) else {},
                             raw_json_path=(
                                 detail_result.get("artifact_path")
-                                if isinstance(detail_result.get("artifact_path"), str)
+                                if has_detail_result and isinstance(detail_result.get("artifact_path"), str)
                                 else None
                             )
                             or raw_json_path,
                         )
-                        metrics = dict(detail_result.get("metrics") or {})
-                        metrics.setdefault(
-                            "capture_source",
-                            detail_result.get("backend") or "collector_stub",
-                        )
-                        db_api.insert_video_snapshot(
-                            session=session,
-                            video_id_fk=video.id,
-                            metrics=metrics,
-                            capture_source=metrics.get("capture_source") or "collector_stub",
-                            raw_json_path=(
-                                detail_result.get("artifact_path")
-                                if isinstance(detail_result.get("artifact_path"), str)
-                                else None
+                        if has_detail_result:
+                            metrics = dict(detail_result.get("metrics") or {})
+                            metrics.setdefault(
+                                "capture_source",
+                                detail_result.get("backend") or "collector_stub",
                             )
-                            or raw_json_path,
-                        )
-                        item_detail_snapshots += 1
-                        detail_snapshots_inserted += 1
+                            db_api.insert_video_snapshot(
+                                session=session,
+                                video_id_fk=video.id,
+                                metrics=metrics,
+                                capture_source=metrics.get("capture_source") or "collector_stub",
+                                raw_json_path=(
+                                    detail_result.get("artifact_path")
+                                    if isinstance(detail_result.get("artifact_path"), str)
+                                    else None
+                                )
+                                or raw_json_path,
+                            )
+                            item_detail_snapshots += 1
+                            detail_snapshots_inserted += 1
+
+                        if has_comments_result and comment_persist_helper is not None:
+                            comments_raw_json_path = (
+                                comments_result.get("artifact_path")
+                                if isinstance(comments_result.get("artifact_path"), str)
+                                else None
+                            ) or raw_json_path
+                            persisted_comments_result = self._persist_video_comments_result(
+                                comment_persist_helper,
+                                session=session,
+                                video=video,
+                                comments_result=comments_result,
+                                raw_json_path=comments_raw_json_path,
+                            )
+                            item_comments_persisted, item_comment_replies_persisted = self._extract_comment_persistence_counts(
+                                persisted_comments_result,
+                                comments_result,
+                            )
+                            comments_persisted_count += item_comments_persisted
+                            comment_replies_persisted_count += item_comment_replies_persisted
                     except Exception as exc:  # pragma: no cover - runtime safety
                         failed_count += 1
                         failures.append(
@@ -593,6 +630,8 @@ class Orchestrator:
 
                 persistence_items[-1]["detail_snapshots_inserted"] = item_detail_snapshots
                 persistence_items[-1]["comment_results_seen"] = item_comment_results_seen
+                persistence_items[-1]["comments_persisted_count"] = item_comments_persisted
+                persistence_items[-1]["comment_replies_persisted_count"] = item_comment_replies_persisted
 
         return {
             "enabled": True,
@@ -600,10 +639,177 @@ class Orchestrator:
             "homepage_persisted_count": homepage_persisted_count,
             "detail_snapshots_inserted": detail_snapshots_inserted,
             "comment_results_seen": comment_results_seen,
+            "comments_persisted_count": comments_persisted_count,
+            "comment_replies_persisted_count": comment_replies_persisted_count,
             "failed_count": failed_count,
             "items": persistence_items,
             "failures": failures,
         }
+
+    def _persist_video_comments_result(
+        self,
+        helper: Any,
+        *,
+        session: Any,
+        video: Any,
+        comments_result: dict[str, Any],
+        raw_json_path: str | None,
+    ) -> Any:
+        attempts: list[tuple[tuple[Any, ...], dict[str, Any]]] = [
+            (
+                (),
+                {
+                    "session": session,
+                    "video_id_fk": getattr(video, "id", None),
+                    "comments_result": comments_result,
+                    "raw_json_path": raw_json_path,
+                },
+            ),
+            (
+                (),
+                {
+                    "session": session,
+                    "video_id": getattr(video, "id", None),
+                    "comments_result": comments_result,
+                    "raw_json_path": raw_json_path,
+                },
+            ),
+            (
+                (),
+                {
+                    "session": session,
+                    "video": video,
+                    "comments_result": comments_result,
+                    "raw_json_path": raw_json_path,
+                },
+            ),
+            (
+                (),
+                {
+                    "session": session,
+                    "video_id_fk": getattr(video, "id", None),
+                    "comments": comments_result.get("comments"),
+                    "replies": comments_result.get("replies"),
+                    "scan_meta": comments_result.get("scan_meta"),
+                    "raw_json_path": raw_json_path,
+                },
+            ),
+            (
+                (),
+                {
+                    "session": session,
+                    "video_id": getattr(video, "id", None),
+                    "comments": comments_result.get("comments"),
+                    "replies": comments_result.get("replies"),
+                    "scan_meta": comments_result.get("scan_meta"),
+                    "raw_json_path": raw_json_path,
+                },
+            ),
+            (
+                (session, getattr(video, "id", None), comments_result, raw_json_path),
+                {},
+            ),
+            (
+                (session, video, comments_result, raw_json_path),
+                {},
+            ),
+        ]
+
+        last_error: Exception | None = None
+        for args, kwargs in attempts:
+            try:
+                return helper(*args, **{key: value for key, value in kwargs.items() if value is not None})
+            except TypeError as exc:
+                last_error = exc
+                continue
+        if last_error is not None:
+            raise last_error
+        return helper(session=session, video_id_fk=getattr(video, "id", None), comments_result=comments_result, raw_json_path=raw_json_path)
+
+    def _extract_comment_persistence_counts(
+        self,
+        persistence_result: Any,
+        comments_result: dict[str, Any],
+    ) -> tuple[int, int]:
+        payload = self._as_mapping(persistence_result)
+        comment_count_keys = (
+            "comments_persisted_count",
+            "comment_persisted_count",
+            "comments_count",
+            "persisted_comments_count",
+            "inserted_comments_count",
+        )
+        reply_count_keys = (
+            "comment_replies_persisted_count",
+            "replies_persisted_count",
+            "reply_count",
+            "replies_count",
+            "persisted_replies_count",
+            "inserted_replies_count",
+        )
+
+        comment_count_present = self._has_any_key(payload, comment_count_keys)
+        reply_count_present = self._has_any_key(payload, reply_count_keys)
+
+        comments_count = self._first_int_from_mapping(payload, comment_count_keys)
+        replies_count = self._first_int_from_mapping(payload, reply_count_keys)
+
+        if not comment_count_present:
+            comments_count = len(list((comments_result or {}).get("comments") or []))
+        if not reply_count_present:
+            replies_count = len(list((comments_result or {}).get("replies") or []))
+        return comments_count, replies_count
+
+    def _as_mapping(self, value: Any) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        if hasattr(value, "model_dump"):
+            try:
+                dumped = value.model_dump()  # type: ignore[call-arg]
+            except TypeError:
+                dumped = value.model_dump(exclude_none=True)  # type: ignore[call-arg]
+            if isinstance(dumped, dict):
+                return dumped
+        if hasattr(value, "__dict__"):
+            return {
+                key: item
+                for key, item in dict(value.__dict__).items()
+                if not str(key).startswith("_sa_")
+            }
+        return {}
+
+    def _first_int_from_mapping(self, mapping: dict[str, Any], keys: tuple[str, ...]) -> int:
+        for key in keys:
+            if key not in mapping:
+                continue
+            value = mapping.get(key)
+            if isinstance(value, int):
+                return value
+            if isinstance(value, float):
+                return int(value)
+            if isinstance(value, str):
+                text = value.strip()
+                if not text:
+                    continue
+                try:
+                    return int(float(text))
+                except ValueError:
+                    continue
+            if isinstance(value, (list, tuple, set)):
+                return len(value)
+        summary = mapping.get("summary")
+        if isinstance(summary, dict):
+            return self._first_int_from_mapping(summary, keys)
+        return 0
+
+    def _has_any_key(self, mapping: dict[str, Any], keys: tuple[str, ...]) -> bool:
+        for key in keys:
+            if key in mapping:
+                return True
+        summary = mapping.get("summary")
+        if isinstance(summary, dict):
+            return self._has_any_key(summary, keys)
+        return False
 
     def _write_artifact(self, *, category: str, stem: str, payload: dict[str, Any]) -> Path:
         category_path = self.config.artifacts_dir / category

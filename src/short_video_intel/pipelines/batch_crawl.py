@@ -240,6 +240,9 @@ def _build_full_batch_summary(
     total_detail_attempted = 0
     total_comment_success = 0
     total_comment_attempted = 0
+    total_comment_items_seen = 0
+    total_comment_entries_seen = 0
+    total_comment_reply_entries_seen = 0
 
     for item in results:
         target = item.get("target") or {}
@@ -252,6 +255,9 @@ def _build_full_batch_summary(
         detail_attempted = _safe_int(summary.get("detail_attempted"))
         comments_success = _safe_int(summary.get("comments_succeeded"))
         comments_attempted = _safe_int(summary.get("comments_attempted"))
+        comment_items_seen = _safe_int(summary.get("comment_items_seen"))
+        comment_entries_seen = _safe_int(summary.get("comment_entries_seen"))
+        comment_reply_entries_seen = _safe_int(summary.get("comment_reply_entries_seen"))
         warnings_count = _count_full_batch_warnings(item)
 
         total_videos_seen += videos_seen
@@ -259,6 +265,9 @@ def _build_full_batch_summary(
         total_detail_attempted += detail_attempted
         total_comment_success += comments_success
         total_comment_attempted += comments_attempted
+        total_comment_items_seen += comment_items_seen
+        total_comment_entries_seen += comment_entries_seen
+        total_comment_reply_entries_seen += comment_reply_entries_seen
 
         account_summary.append(
             {
@@ -267,6 +276,9 @@ def _build_full_batch_summary(
                 "videos_seen": videos_seen,
                 "detail_success": detail_success,
                 "comments_success": comments_success,
+                "comment_items_seen": comment_items_seen,
+                "comment_entries_seen": comment_entries_seen,
+                "comment_reply_entries_seen": comment_reply_entries_seen,
                 "warnings_count": warnings_count,
                 "backend": homepage_result.get("backend"),
                 "extraction_version": homepage_result.get("extraction_version"),
@@ -295,6 +307,9 @@ def _build_full_batch_summary(
             "comment_attempted": total_comment_attempted,
             "comment_success_count": total_comment_success,
             "comment_success_rate": comment_success_rate,
+            "comment_items_seen": total_comment_items_seen,
+            "comment_entries_seen": total_comment_entries_seen,
+            "comment_reply_entries_seen": total_comment_reply_entries_seen,
             "failed_count": len(failures),
             "with_video_detail": with_video_detail,
             "with_comments": with_comments,
@@ -331,6 +346,9 @@ def _collect_single_full_target(
         comments_attempted = 0
         comments_succeeded = 0
         comments_failed = 0
+        comment_items_seen = 0
+        comment_entries_seen = 0
+        comment_reply_entries_seen = 0
 
         for candidate in videos:
             candidate_copy = _normalize_video_candidate(candidate)
@@ -357,6 +375,9 @@ def _collect_single_full_target(
                     )
                     item["comments_result"] = comments_result
                     comments_succeeded += 1
+                    comment_items_seen += 1
+                    comment_entries_seen += len(list((comments_result or {}).get("comments") or []))
+                    comment_reply_entries_seen += len(list((comments_result or {}).get("replies") or []))
                 except Exception as exc:  # pragma: no cover - runtime safety fallback
                     item["comments_error"] = f"{type(exc).__name__}: {exc}"
                     comments_failed += 1
@@ -376,6 +397,9 @@ def _collect_single_full_target(
                 "comments_attempted": comments_attempted,
                 "comments_succeeded": comments_succeeded,
                 "comments_failed": comments_failed,
+                "comment_items_seen": comment_items_seen,
+                "comment_entries_seen": comment_entries_seen,
+                "comment_reply_entries_seen": comment_reply_entries_seen,
                 "with_video_detail": with_video_detail,
                 "with_comments": with_comments,
                 "comment_pages": comment_pages,
