@@ -7,7 +7,7 @@ from typing import Any
 
 from ..browser.page_runtime import (
     detect_playwright,
-    extract_video_candidates_from_html,
+    extract_video_candidates_with_diagnostics,
     run_playwright_homepage_probe,
 )
 
@@ -47,6 +47,8 @@ def collect_homepage_videos(config: Any, homepage_url: str, max_items: int = 50)
             "homepage_url": normalized_homepage_url,
             "scanned_at": scanned_at,
             "videos": [],
+            "diagnostics": _empty_diagnostics(normalized_homepage_url),
+            "extraction_version": "homepage-extract.v2",
             "warnings": ["max_items must be greater than 0"],
         }
 
@@ -56,6 +58,8 @@ def collect_homepage_videos(config: Any, homepage_url: str, max_items: int = 50)
             "homepage_url": normalized_homepage_url,
             "scanned_at": scanned_at,
             "videos": [],
+            "diagnostics": _empty_diagnostics(normalized_homepage_url),
+            "extraction_version": "homepage-extract.v2",
             "warnings": [
                 "playwright is not installed; returning a structured stub result",
                 f"max_items={max_items}",
@@ -70,17 +74,21 @@ def collect_homepage_videos(config: Any, homepage_url: str, max_items: int = 50)
             "homepage_url": normalized_homepage_url,
             "scanned_at": scanned_at,
             "videos": [],
+            "diagnostics": _empty_diagnostics(normalized_homepage_url),
+            "extraction_version": "homepage-extract.v2",
             "warnings": [
                 f"playwright probe failed: {exc!r}",
                 f"max_items={max_items}",
             ],
         }
 
-    videos = extract_video_candidates_from_html(
+    extraction = extract_video_candidates_with_diagnostics(
         probe.get("page_html", ""),
         probe.get("final_url", normalized_homepage_url),
         max_items=max_items,
     )
+    videos = extraction["videos"]
+    diagnostics = extraction["diagnostics"]
     warnings = [
         "homepage html scanned with regex-based video URL extraction",
         f"page_title={probe.get('title')!r}",
@@ -94,6 +102,8 @@ def collect_homepage_videos(config: Any, homepage_url: str, max_items: int = 50)
         "homepage_url": normalized_homepage_url,
         "scanned_at": scanned_at,
         "videos": videos,
+        "diagnostics": diagnostics,
+        "extraction_version": diagnostics.get("extraction_version", "homepage-extract.v2"),
         "warnings": warnings,
     }
 
@@ -107,3 +117,14 @@ def _normalize_homepage_url(homepage_url: str) -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _empty_diagnostics(homepage_url: str) -> dict[str, Any]:
+    return {
+        "extraction_version": "homepage-extract.v2",
+        "total_matches": 0,
+        "unique_video_ids": 0,
+        "invalid_candidates": 0,
+        "duplicate_candidates": 0,
+        "homepage_origin": homepage_url,
+    }

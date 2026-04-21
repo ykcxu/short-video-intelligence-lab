@@ -48,7 +48,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     import_parser.add_argument(
         "--format",
-        choices=("auto", "csv", "json"),
+        choices=("auto", "csv", "tsv", "json"),
         default="auto",
         help="Override input format detection.",
     )
@@ -172,6 +172,67 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     batch_parser.set_defaults(func=_cmd_crawl_targets_batch)
 
+    full_batch_parser = subparsers.add_parser(
+        "crawl-targets-full-batch",
+        help="Batch crawl homepage targets and optionally enrich videos with detail/comments.",
+    )
+    full_batch_parser.add_argument(
+        "--source-file",
+        type=Path,
+        default=None,
+        help="Target source file (csv/tsv/json). Required unless --from-db is set.",
+    )
+    full_batch_parser.add_argument(
+        "--format",
+        choices=("auto", "csv", "tsv", "json"),
+        default="auto",
+        help="Input format for --source-file.",
+    )
+    full_batch_parser.add_argument(
+        "--from-db",
+        action="store_true",
+        help="Load targets from DB instead of file.",
+    )
+    full_batch_parser.add_argument(
+        "--status",
+        default="active",
+        help="DB mode: filter by target status.",
+    )
+    full_batch_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="DB mode: optional limit.",
+    )
+    full_batch_parser.add_argument(
+        "--with-video-detail",
+        action="store_true",
+        help="Collect a video detail payload for each extracted video candidate.",
+    )
+    full_batch_parser.add_argument(
+        "--with-comments",
+        action="store_true",
+        help="Collect a comment scan payload for each extracted video candidate.",
+    )
+    full_batch_parser.add_argument(
+        "--comment-pages",
+        type=int,
+        default=3,
+        help="Requested comment pagination depth when --with-comments is enabled.",
+    )
+    full_batch_parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Batch worker count (ThreadPool).",
+    )
+    full_batch_parser.add_argument(
+        "--persist-db",
+        action="store_true",
+        help="Persist batch crawl results to DB via db.upsert helpers.",
+    )
+    full_batch_parser.set_defaults(func=_cmd_crawl_targets_full_batch)
+
     return parser
 
 
@@ -220,6 +281,21 @@ def _cmd_crawl_targets_batch(orchestrator: Orchestrator, args: argparse.Namespac
         limit=args.limit,
         max_items=args.max_items,
         max_workers=args.workers,
+        persist_db=args.persist_db,
+    )
+
+
+def _cmd_crawl_targets_full_batch(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    return orchestrator.crawl_targets_full_batch(
+        source_file=args.source_file,
+        input_format=args.format,
+        from_db=args.from_db,
+        status=args.status,
+        limit=args.limit,
+        max_workers=args.workers,
+        with_video_detail=args.with_video_detail,
+        with_comments=args.with_comments,
+        comment_pages=args.comment_pages,
         persist_db=args.persist_db,
     )
 

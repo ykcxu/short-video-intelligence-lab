@@ -115,21 +115,51 @@ def run_playwright_homepage_probe(config: Any, homepage_url: str) -> dict[str, A
 def extract_video_candidates_from_html(html: str, homepage_url: str, max_items: int) -> list[dict[str, Any]]:
     """Extract stable video URL candidates from homepage HTML."""
 
+    return extract_video_candidates_with_diagnostics(html, homepage_url, max_items)["videos"]
+
+
+def extract_video_candidates_with_diagnostics(
+    html: str,
+    homepage_url: str,
+    max_items: int,
+) -> dict[str, Any]:
+    """Extract video candidates and return extraction diagnostics."""
+
     if max_items <= 0:
-        return []
+        return {
+            "videos": [],
+            "diagnostics": {
+                "extraction_version": "homepage-extract.v2",
+                "total_matches": 0,
+                "unique_video_ids": 0,
+                "invalid_candidates": 0,
+                "duplicate_candidates": 0,
+                "homepage_origin": _homepage_origin(homepage_url),
+            },
+        }
 
     search_space = str(html or "").replace(r"\/", "/")
     homepage_origin = _homepage_origin(homepage_url)
     seen_video_ids: set[str] = set()
     videos: list[dict[str, Any]] = []
+    total_matches = 0
+    invalid_candidates = 0
+    duplicate_candidates = 0
 
     for match in _VIDEO_URL_RE.finditer(search_space):
+        total_matches += 1
         video_id = match.group("video_id")
-        if not video_id or video_id in seen_video_ids:
+        if not _is_valid_video_id(video_id):
+            invalid_candidates += 1
+            continue
+
+        if video_id in seen_video_ids:
+            duplicate_candidates += 1
             continue
 
         raw_url = match.group("url")
         if not raw_url:
+            invalid_candidates += 1
             continue
 
         normalized_url = _normalize_video_url(raw_url, homepage_origin, video_id)
@@ -146,7 +176,17 @@ def extract_video_candidates_from_html(html: str, homepage_url: str, max_items: 
         if len(videos) >= max_items:
             break
 
-    return videos
+    return {
+        "videos": videos,
+        "diagnostics": {
+            "extraction_version": "homepage-extract.v2",
+            "total_matches": total_matches,
+            "unique_video_ids": len(seen_video_ids),
+            "invalid_candidates": invalid_candidates,
+            "duplicate_candidates": duplicate_candidates,
+            "homepage_origin": homepage_origin,
+        },
+    }
 
 
 def _normalize_video_url(raw_url: str, homepage_origin: str, video_id: str) -> str:
@@ -160,6 +200,17 @@ def _homepage_origin(homepage_url: str) -> str:
     if not parsed.scheme or not parsed.netloc:
         return str(homepage_url).strip()
     return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
+
+def _is_valid_video_id(video_id: Any) -> bool:
+    if not isinstance(video_id, str):
+        return False
+
+    candidate = video_id.strip()
+    if len(candidate) < 6 or len(candidate) > 128:
+        return False
+
+    return bool(re.fullmatch(r"[A-Za-z0-9_-]+", candidate))
 
 
 def _now_iso() -> str:

@@ -15,7 +15,7 @@ from .collector.targets_loader import load_targets_from_path
 from .collector.video_collector import collect_video_detail
 from .config import AppConfig
 from .downloader import build_download_jobs, run_download_jobs
-from .pipelines import run_batch_homepage_crawl
+from .pipelines import run_batch_full_collect, run_batch_homepage_crawl
 
 
 class Orchestrator:
@@ -243,6 +243,60 @@ class Orchestrator:
         summary["artifact_path"] = str(artifact_path)
         return summary
 
+    def crawl_targets_full_batch(
+        self,
+        *,
+        source_file: str | Path | None = None,
+        input_format: str = "auto",
+        from_db: bool = False,
+        status: str = "active",
+        limit: int | None = None,
+        max_items: int = 50,
+        max_workers: int = 1,
+        with_video_detail: bool = False,
+        with_comments: bool = False,
+        comment_pages: int = 3,
+        persist_db: bool = False,
+    ) -> dict[str, Any]:
+        self.bootstrap()
+        targets = self._load_targets_for_batch(
+            source_file=source_file,
+            input_format=input_format,
+            from_db=from_db,
+            status=status,
+            limit=limit,
+        )
+
+        batch_result = run_batch_full_collect(
+            self.config,
+            targets=targets,
+            with_video_detail=with_video_detail,
+            with_comments=with_comments,
+            comment_pages=comment_pages,
+            max_items=max_items,
+            max_workers=max_workers,
+        )
+        summary: dict[str, Any] = {
+            "source": "db" if from_db else "file",
+            "targets_loaded": len(targets),
+            "batch": batch_result,
+        }
+
+        artifact_path = self._write_artifact(
+            category="collector/full-batch",
+            stem="batch_full_collect",
+            payload=summary,
+        )
+        summary["artifact_path"] = str(artifact_path)
+
+        if persist_db:
+            summary["persistence"] = self._persist_full_batch_results(
+                batch_result,
+                raw_json_path=str(artifact_path),
+            )
+
+        return summary
+
     def create_download_jobs(
         self,
         *,
@@ -410,6 +464,140 @@ class Orchestrator:
             "enabled": True,
             "backend": "db-module",
             "persisted_count": persisted_count,
+            "failed_count": failed_count,
+            "items": persistence_items,
+            "failures": failures,
+        }
+
+    def _persist_full_batch_results(
+        self,
+        batch_result: dict[str, Any],
+        *,
+        raw_json_path: str | None = None,
+    ) -> dict[str, Any]:
+        db_api = self._load_db_api()
+        required_attrs = ("get_session", "persist_homepage_crawl_result", "upsert_video_from_candidate", "insert_video_snapshot")
+        if db_api is None or any(not hasattr(db_api, attr) for attr in required_attrs):
+            return {
+                "enabled": True,
+                "backend": "unavailable",
+                "homepage_persisted_count": 0,
+                "detail_snapshots_inserted": 0,
+                "comment_results_seen": 0,
+                "failed_count": 0,
+                "failures": ["db upsert helpers unavailable"],
+            }
+
+        homepage_persisted_count = 0
+        detail_snapshots_inserted = 0
+        comment_results_seen = 0
+        failed_count = 0
+        failures: list[dict[str, Any]] = []
+        persistence_items: list[dict[str, Any]] = []
+
+        with db_api.get_session(self.config.database_url) as session:
+            for item in batch_result.get("results", []):
+                target = item.get("target", {})
+                homepage_result = item.get("homepage_result") or item.get("crawl_result") or {}
+                homepage_raw_json_path = (
+                    homepage_result.get("artifact_path")
+                    if isinstance(homepage_result, dict)
+                    else None
+                ) or raw_json_path
+
+                try:
+                    homepage_summary = db_api.persist_homepage_crawl_result(
+                        session,
+                        target,
+                        homepage_result,
+                        raw_json_path=homepage_raw_json_path,
+                    )
+                    persistence_items.append(
+                        {
+                            "homepage_url": homepage_summary["homepage_url"],
+                            "homepage_target_id": homepage_summary["homepage_target_id"],
+                            "homepage_persisted": True,
+                            "detail_snapshots_inserted": 0,
+                            "comment_results_seen": 0,
+                        }
+                    )
+                    homepage_persisted_count += 1
+                except Exception as exc:  # pragma: no cover - runtime safety
+                    failed_count += 1
+                    failures.append(
+                        {
+                            "homepage_url": target.get("homepage_url"),
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+                    )
+                    continue
+
+                homepage_target_id = homepage_summary["homepage_target_id"]
+                item_detail_snapshots = 0
+                item_comment_results_seen = 0
+
+                for video_item in item.get("video_items", []):
+                    candidate = video_item.get("candidate") or {}
+                    detail_result = video_item.get("detail_result")
+                    comments_result = video_item.get("comments_result")
+
+                    if isinstance(comments_result, dict):
+                        item_comment_results_seen += 1
+                        comment_results_seen += 1
+
+                    if not isinstance(detail_result, dict):
+                        continue
+
+                    try:
+                        video = db_api.upsert_video_from_candidate(
+                            session=session,
+                            target_id=homepage_target_id,
+                            candidate=candidate if isinstance(candidate, dict) else {},
+                            raw_json_path=(
+                                detail_result.get("artifact_path")
+                                if isinstance(detail_result.get("artifact_path"), str)
+                                else None
+                            )
+                            or raw_json_path,
+                        )
+                        metrics = dict(detail_result.get("metrics") or {})
+                        metrics.setdefault(
+                            "capture_source",
+                            detail_result.get("backend") or "collector_stub",
+                        )
+                        db_api.insert_video_snapshot(
+                            session=session,
+                            video_id_fk=video.id,
+                            metrics=metrics,
+                            capture_source=metrics.get("capture_source") or "collector_stub",
+                            raw_json_path=(
+                                detail_result.get("artifact_path")
+                                if isinstance(detail_result.get("artifact_path"), str)
+                                else None
+                            )
+                            or raw_json_path,
+                        )
+                        item_detail_snapshots += 1
+                        detail_snapshots_inserted += 1
+                    except Exception as exc:  # pragma: no cover - runtime safety
+                        failed_count += 1
+                        failures.append(
+                            {
+                                "homepage_url": target.get("homepage_url"),
+                                "video_url": candidate.get("video_url"),
+                                "error": f"{type(exc).__name__}: {exc}",
+                            }
+                        )
+
+                persistence_items[-1]["detail_snapshots_inserted"] = item_detail_snapshots
+                persistence_items[-1]["comment_results_seen"] = item_comment_results_seen
+
+        return {
+            "enabled": True,
+            "backend": "db-module",
+            "homepage_persisted_count": homepage_persisted_count,
+            "detail_snapshots_inserted": detail_snapshots_inserted,
+            "comment_results_seen": comment_results_seen,
             "failed_count": failed_count,
             "items": persistence_items,
             "failures": failures,
