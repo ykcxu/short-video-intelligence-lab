@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .analysis.reporting import analyze_positive_factors, analyze_video_fit_from_file
+from .browser.session_manager import INVALID_SESSION_CHARS
 from .config import load_config
 from .orchestrator import Orchestrator
 
@@ -24,6 +25,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional workspace root path (default: current directory).",
+    )
+    parser.add_argument(
+        "--session-name",
+        dest="session_name_override",
+        default=None,
+        help="Optional session name override for browser.storage_state.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -391,14 +398,46 @@ def _print_result(result: dict[str, Any]) -> None:
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
+def _normalize_session_name_cli(session_name: str) -> str:
+    cleaned = str(session_name).strip()
+    if not cleaned:
+        raise ValueError("session_name must not be empty")
+    cleaned = INVALID_SESSION_CHARS.sub("_", cleaned)
+    cleaned = cleaned.rstrip(" .")
+    if not cleaned:
+        raise ValueError("session_name becomes empty after sanitization")
+    return cleaned
+
+
+def _merge_notice(existing: Any, appended: str) -> str:
+    if existing is None:
+        return appended
+    existing_text = str(existing).strip()
+    if not existing_text:
+        return appended
+    return f"{existing_text}\n{appended}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    orchestrator = Orchestrator(load_config(path=args.config, workspace=args.workspace))
-
     try:
+        orchestrator = Orchestrator(load_config(path=args.config, workspace=args.workspace))
+
+        if args.session_name_override is not None:
+            normalized_session_name = _normalize_session_name_cli(args.session_name_override)
+            session_state_path = (
+                orchestrator.config.workspace / "data" / "sessions" / normalized_session_name / "state.json"
+            )
+            orchestrator.config.browser.storage_state = session_state_path
+
         result = args.func(orchestrator, args)
+        if args.session_name_override is not None:
+            notice = (
+                f"[session-override] enabled: browser.storage_state -> {orchestrator.config.browser.storage_state}"
+            )
+            result["notice"] = _merge_notice(result.get("notice"), notice)
     except Exception as exc:  # pragma: no cover - defensive CLI guard
         result = {
             "ok": False,
