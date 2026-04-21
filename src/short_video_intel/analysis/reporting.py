@@ -210,6 +210,145 @@ def analyze_video_fit_from_file(
         return _error_result(AnalysisError(f"{type(exc).__name__}: {exc}"), analysis_type="video_fit")
 
 
+def analyze_video_fit_from_full_batch(
+    *,
+    workspace: Path,
+    artifacts_dir: Path,
+    artifact: Path | None = None,
+    output: Path | None = None,
+) -> dict[str, Any]:
+    """Analyze video fit in batch based on a full-batch artifact."""
+
+    try:
+        resolved_artifact = _resolve_artifact_path(
+            workspace=workspace,
+            artifacts_dir=artifacts_dir,
+            artifact=artifact,
+        )
+        payload = _load_json(resolved_artifact)
+        batch_results = _extract_full_batch_results(payload)
+        items = _build_video_fit_batch_items(batch_results)
+        batch_result = batch_analyze_video_fit(items)
+        enriched_results = _merge_video_fit_results_with_context(
+            contexts=items,
+            fit_results=list(batch_result.get("results") or []),
+        )
+
+        result = {
+            "ok": True,
+            "analysis_type": "video_fit_from_full_batch",
+            "artifact_path": str(resolved_artifact),
+            "total_videos": len(items),
+            "result": {
+                "version": batch_result.get("version", ""),
+                "summary": batch_result.get("summary", {}),
+                "results": enriched_results,
+            },
+        }
+
+        if output is not None:
+            output_path = _resolve_output_path(workspace=workspace, output=output)
+            _write_json(output_path, result)
+            result["output_path"] = str(output_path)
+        return result
+    except AnalysisError as exc:
+        return _error_result_video_fit_from_full_batch(exc)
+    except Exception as exc:  # pragma: no cover - defensive wrapper
+        return _error_result_video_fit_from_full_batch(AnalysisError(f"{type(exc).__name__}: {exc}"))
+
+
+def _extract_full_batch_results(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, Mapping):
+        raise AnalysisError("artifact payload must be a JSON object")
+
+    candidates = (
+        _mapping_get(payload.get("batch"), "results"),
+        payload.get("results"),
+    )
+    for candidate in candidates:
+        if isinstance(candidate, list):
+            return [dict(item) for item in candidate if isinstance(item, Mapping)]
+
+    raise AnalysisError("batch.results not found in artifact")
+
+
+def _build_video_fit_batch_items(batch_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for result_item in batch_results:
+        target = _as_dict(result_item.get("target"))
+        source_name = _safe_text(target.get("source_name"))
+        homepage_url = _safe_text(target.get("homepage_url"))
+
+        for video_item in list(result_item.get("video_items") or []):
+            if not isinstance(video_item, Mapping):
+                continue
+            candidate = _as_dict(video_item.get("candidate"))
+            detail_result = _as_dict(video_item.get("detail_result"))
+            metrics = _as_dict(detail_result.get("metrics"))
+            video_url = _safe_text(
+                candidate.get("video_url")
+                or detail_result.get("video_url")
+                or _build_video_url_from_candidate(candidate)
+            )
+            video_id = _safe_text(candidate.get("video_id"))
+
+            item = {
+                "video_detail": {
+                    "metrics": metrics,
+                    "source_name": source_name,
+                    "homepage_url": homepage_url,
+                    "video_url": video_url,
+                    "video_id": video_id,
+                }
+            }
+            items.append(item)
+    return items
+
+
+def _merge_video_fit_results_with_context(
+    *,
+    contexts: list[dict[str, Any]],
+    fit_results: list[Any],
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    for index, context in enumerate(contexts):
+        video_detail = _as_dict(context.get("video_detail"))
+        fit_result = fit_results[index] if index < len(fit_results) and isinstance(fit_results[index], Mapping) else {}
+        merged.append(
+            {
+                "index": index,
+                "source_name": video_detail.get("source_name", ""),
+                "homepage_url": video_detail.get("homepage_url", ""),
+                "video_url": video_detail.get("video_url", ""),
+                "video_id": video_detail.get("video_id", ""),
+                "metrics": video_detail.get("metrics", {}),
+                "fit": dict(fit_result),
+            }
+        )
+    return merged
+
+
+def _build_video_url_from_candidate(candidate: Mapping[str, Any]) -> str:
+    video_id = _safe_text(candidate.get("video_id"))
+    if not video_id:
+        return ""
+    return f"https://www.douyin.com/video/{video_id}"
+
+
+def _error_result_video_fit_from_full_batch(exc: AnalysisError) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "analysis_type": "video_fit_from_full_batch",
+        "artifact_path": None,
+        "total_videos": 0,
+        "result": {"summary": {}, "results": []},
+        "error": {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        },
+    }
+
+
 def _error_result(exc: AnalysisError, *, analysis_type: str = "positive_factors") -> dict[str, Any]:
     return {
         "ok": False,
@@ -221,3 +360,15 @@ def _error_result(exc: AnalysisError, *, analysis_type: str = "positive_factors"
         "score": None,
         "recommendations": [],
     }
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, Mapping):
+        return dict(value)
+    return {}
+
+
+def _safe_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
