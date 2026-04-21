@@ -11,8 +11,23 @@ REQUIRED_TARGET_FIELDS = (
     "source_name",
     "category_lv1",
     "category_lv2",
-    "tags_json",
 )
+
+HEADER_ALIASES: dict[str, str] = {
+    # 中文输入头
+    "平台": "platform",
+    "分类": "category_lv1",
+    "部门": "category_lv2",
+    "账号类型": "account_type",
+    "账号名": "source_name",
+    "账号uid": "account_uid",
+    "直播间链接": "live_url",
+    "主页链接": "homepage_url",
+    # 英文别名
+    "uid": "account_uid",
+    "account_name": "source_name",
+    "home_url": "homepage_url",
+}
 
 
 def load_targets_from_path(
@@ -29,6 +44,8 @@ def load_targets_from_path(
         suffix = source_path.suffix.lower()
         if suffix == ".csv":
             normalized_format = "csv"
+        elif suffix == ".tsv":
+            normalized_format = "tsv"
         elif suffix == ".json":
             normalized_format = "json"
         else:
@@ -36,6 +53,8 @@ def load_targets_from_path(
 
     if normalized_format == "csv":
         return load_targets_from_csv(source_path)
+    if normalized_format == "tsv":
+        return load_targets_from_tsv(source_path)
     if normalized_format == "json":
         return load_targets_from_json(source_path)
 
@@ -45,7 +64,18 @@ def load_targets_from_path(
 def load_targets_from_csv(path: str | Path) -> list[dict[str, Any]]:
     source_path = Path(path)
     with source_path.open("r", encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle)
+        reader = csv.DictReader(handle, delimiter=",")
+        _validate_headers(reader.fieldnames or [], source_path)
+        return [
+            _normalize_target_row(row, row_index=index + 1, source_path=source_path)
+            for index, row in enumerate(reader)
+        ]
+
+
+def load_targets_from_tsv(path: str | Path) -> list[dict[str, Any]]:
+    source_path = Path(path)
+    with source_path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
         _validate_headers(reader.fieldnames or [], source_path)
         return [
             _normalize_target_row(row, row_index=index + 1, source_path=source_path)
@@ -90,7 +120,8 @@ def load_targets_from_json(path: str | Path) -> list[dict[str, Any]]:
 
 
 def _validate_headers(headers: list[str], source_path: Path) -> None:
-    missing = [field for field in REQUIRED_TARGET_FIELDS if field not in headers]
+    canonical_headers = {_canonical_key(field) for field in headers}
+    missing = [field for field in REQUIRED_TARGET_FIELDS if field not in canonical_headers]
     if missing:
         raise ValueError(
             f"{source_path} is missing required columns: {', '.join(missing)}"
@@ -108,10 +139,13 @@ def _normalize_target_row(
             f"{source_path} row {row_index} must be an object, got {type(record).__name__}"
         )
 
-    normalized = dict(record)
+    normalized = {_canonical_key(key): value for key, value in dict(record).items()}
     for field in REQUIRED_TARGET_FIELDS:
         if field not in normalized:
             raise ValueError(f"{source_path} row {row_index} is missing field: {field}")
+
+    if "tags_json" not in normalized:
+        normalized["tags_json"] = ""
 
     homepage_url = _normalize_text(normalized.get("homepage_url"))
     source_name = _normalize_text(normalized.get("source_name"))
@@ -124,7 +158,10 @@ def _normalize_target_row(
     normalized["source_name"] = source_name
     normalized["category_lv1"] = _normalize_text(normalized.get("category_lv1"))
     normalized["category_lv2"] = _normalize_text(normalized.get("category_lv2"))
-    normalized["tags_json"] = _normalize_tags_json(normalized.get("tags_json"), source_path, row_index)
+    tags_value = normalized.get("tags_json")
+    if not _normalize_text(tags_value):
+        tags_value = _build_default_tags(normalized)
+    normalized["tags_json"] = _normalize_tags_json(tags_value, source_path, row_index)
     normalized["row_index"] = row_index
     normalized["source_path"] = str(source_path)
     return normalized
@@ -158,3 +195,20 @@ def _normalize_tags_json(value: Any, source_path: Path, row_index: int) -> str:
                     parsed = [parsed]
         return json.dumps(parsed, ensure_ascii=False)
     return json.dumps(value, ensure_ascii=False)
+
+
+def _canonical_key(key: str) -> str:
+    cleaned = str(key).strip()
+    return HEADER_ALIASES.get(cleaned, cleaned)
+
+
+def _build_default_tags(record: dict[str, Any]) -> list[str]:
+    tags: list[str] = []
+    for key in ("platform", "category_lv1", "category_lv2", "account_type"):
+        value = _normalize_text(record.get(key))
+        if value:
+            tags.append(f"{key}:{value}")
+    account_uid = _normalize_text(record.get("account_uid"))
+    if account_uid:
+        tags.append(f"uid:{account_uid}")
+    return tags

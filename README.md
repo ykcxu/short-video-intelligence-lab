@@ -36,6 +36,12 @@
 - `short-video-intel crawl-video-comments --video-url <url>`
 - `short-video-intel build-download-jobs --videos-file videos.json --run`
 
+`import-targets` 现支持 `csv/json/tsv`，并支持中文表头映射（如“主页链接/账号名/分类/部门”）。
+
+## 目标校准
+
+已在 `docs/goal-calibration.md` 固化当前目标与一期范围。
+
 ## 目录结构
 
 ```text
