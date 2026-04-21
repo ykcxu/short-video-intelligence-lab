@@ -1,24 +1,15 @@
 from __future__ import annotations
 
-"""
-Homepage collection skeleton.
-
-This module provides the public collection entrypoint for homepage video
-discovery. The current implementation is intentionally conservative:
-
-- No hard dependency on Playwright.
-- No complex selectors or full scraping logic yet.
-- Stable return structure for downstream storage / analysis code.
-
-The return payload is designed to remain compatible when the real collector is
-implemented later, so callers can already build storage, retries, and analysis
-around it.
-"""
+"""Homepage collection entrypoint with minimal HTML-based video extraction."""
 
 from datetime import datetime, timezone
 from typing import Any
 
-from ..browser.page_runtime import detect_playwright, run_playwright_homepage_probe
+from ..browser.page_runtime import (
+    detect_playwright,
+    extract_video_candidates_from_html,
+    run_playwright_homepage_probe,
+)
 
 
 def collect_homepage_videos(config: Any, homepage_url: str, max_items: int = 50) -> dict[str, Any]:
@@ -43,7 +34,7 @@ def collect_homepage_videos(config: Any, homepage_url: str, max_items: int = 50)
         - ``backend``: identifies the collection backend used
         - ``homepage_url``: normalized homepage URL
         - ``scanned_at``: UTC ISO-8601 timestamp
-        - ``videos``: list of discovered videos, currently empty
+        - ``videos``: list of discovered video URL candidates
         - ``warnings``: human-readable notes and recoverable issues
     """
 
@@ -85,18 +76,24 @@ def collect_homepage_videos(config: Any, homepage_url: str, max_items: int = 50)
             ],
         }
 
+    videos = extract_video_candidates_from_html(
+        probe.get("page_html", ""),
+        probe.get("final_url", normalized_homepage_url),
+        max_items=max_items,
+    )
     warnings = [
-        "minimal homepage probe only; video extraction is intentionally disabled in this skeleton",
+        "homepage html scanned with regex-based video URL extraction",
         f"page_title={probe.get('title')!r}",
         f"final_url={probe.get('final_url')!r}",
         f"http_status={probe.get('http_status')!r}",
+        f"extracted_count={len(videos)}",
         f"max_items={max_items}",
     ]
     return {
-        "backend": probe.get("backend", "playwright/minimal"),
+        "backend": "playwright/html-regex",
         "homepage_url": normalized_homepage_url,
         "scanned_at": scanned_at,
-        "videos": [],
+        "videos": videos,
         "warnings": warnings,
     }
 

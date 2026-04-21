@@ -16,7 +16,14 @@ runtime bridge for homepage collection experiments.
 
 from datetime import datetime, timezone
 from importlib.util import find_spec
+import re
+from urllib.parse import urljoin, urlsplit, urlunsplit
 from typing import Any
+
+
+_VIDEO_URL_RE = re.compile(
+    r'(?P<url>(?:(?:https?:)?//[^"\'\s<>]+)?(?P<path>/video/(?P<video_id>[A-Za-z0-9_-]+)(?:\?[^"\'\s<>]*)?))'
+)
 
 
 def detect_playwright() -> bool:
@@ -43,7 +50,7 @@ def run_playwright_homepage_probe(config: Any, homepage_url: str) -> dict[str, A
     -------
     dict[str, Any]
         A metadata payload containing the final URL, page title, HTTP status,
-        and the browser settings used for the probe.
+        the page HTML, and the browser settings used for the probe.
     """
 
     if not detect_playwright():
@@ -73,12 +80,14 @@ def run_playwright_homepage_probe(config: Any, homepage_url: str) -> dict[str, A
             context = launched_browser.new_context(**context_kwargs)
             page = context.new_page()
             response = page.goto(homepage_url, wait_until="domcontentloaded", timeout=timeout_ms)
+            page_html = page.content()
 
             return {
                 "homepage_url": homepage_url,
                 "final_url": page.url,
                 "title": page.title(),
                 "http_status": response.status if response is not None else None,
+                "page_html": page_html,
                 "backend": "playwright/minimal",
                 "engine": engine,
                 "headless": headless,
@@ -101,6 +110,56 @@ def run_playwright_homepage_probe(config: Any, homepage_url: str) -> dict[str, A
                 launched_browser.close()
             except Exception:
                 pass
+
+
+def extract_video_candidates_from_html(html: str, homepage_url: str, max_items: int) -> list[dict[str, Any]]:
+    """Extract stable video URL candidates from homepage HTML."""
+
+    if max_items <= 0:
+        return []
+
+    search_space = str(html or "").replace(r"\/", "/")
+    homepage_origin = _homepage_origin(homepage_url)
+    seen_video_ids: set[str] = set()
+    videos: list[dict[str, Any]] = []
+
+    for match in _VIDEO_URL_RE.finditer(search_space):
+        video_id = match.group("video_id")
+        if not video_id or video_id in seen_video_ids:
+            continue
+
+        raw_url = match.group("url")
+        if not raw_url:
+            continue
+
+        normalized_url = _normalize_video_url(raw_url, homepage_origin, video_id)
+        seen_video_ids.add(video_id)
+        videos.append(
+            {
+                "video_url": normalized_url,
+                "video_id": video_id,
+                "title": None,
+                "publish_at": None,
+            }
+        )
+
+        if len(videos) >= max_items:
+            break
+
+    return videos
+
+
+def _normalize_video_url(raw_url: str, homepage_origin: str, video_id: str) -> str:
+    joined = urljoin(homepage_origin, raw_url)
+    parsed = urlsplit(joined)
+    return urlunsplit((parsed.scheme, parsed.netloc, f"/video/{video_id}", "", ""))
+
+
+def _homepage_origin(homepage_url: str) -> str:
+    parsed = urlsplit(str(homepage_url).strip())
+    if not parsed.scheme or not parsed.netloc:
+        return str(homepage_url).strip()
+    return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
 
 
 def _now_iso() -> str:
