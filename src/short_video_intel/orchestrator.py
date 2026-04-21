@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .browser.session_manager import init_session_state
+from .browser.session_manager import capture_session_state, init_session_state
 from .collector.comment_collector import collect_video_comments
 from .collector.homepage_collector import collect_homepage_videos
 from .collector.target_source import load_targets_from_db, load_targets_from_file
@@ -164,6 +164,52 @@ class Orchestrator:
             result["notice"] = "[session-init] 检测到 Playwright，可后续接入真实会话。"
         else:
             result["notice"] = "[session-init] 未检测到 Playwright，仅生成占位 state。"
+        return result
+
+    def session_capture(
+        self,
+        session_name: str,
+        *,
+        homepage_url: str = "https://www.douyin.com/",
+        wait_seconds: int = 120,
+    ) -> dict[str, Any]:
+        self.bootstrap()
+        result = capture_session_state(
+            self.config,
+            session_name,
+            homepage_url=homepage_url,
+            wait_seconds=wait_seconds,
+        )
+        if result.get("ok"):
+            db_api = self._load_db_api()
+            if (
+                db_api is not None
+                and hasattr(db_api, "get_session")
+                and hasattr(db_api, "CrawlSession")
+            ):
+                with db_api.get_session(self.config.database_url) as session:
+                    model = db_api.CrawlSession
+                    existing = (
+                        session.query(model)
+                        .filter(model.session_name == result["session_name"])
+                        .one_or_none()
+                    )
+                    if existing is None:
+                        session.add(
+                            model(
+                                session_name=result["session_name"],
+                                state_file_path=result["state_path"],
+                                cookie_file_path=result.get("mirrored_storage_state"),
+                                login_status="captured",
+                                remarks="manual session capture with storage_state",
+                            )
+                        )
+                    else:
+                        existing.state_file_path = result["state_path"]
+                        existing.cookie_file_path = result.get("mirrored_storage_state")
+                        existing.login_status = "captured"
+                        existing.remarks = "manual session capture refreshed"
+            result["notice"] = "[session-capture] 已保存 storage_state，可用于后续采集。"
         return result
 
     def crawl_homepage(self, homepage_url: str, *, max_items: int = 50) -> dict[str, Any]:

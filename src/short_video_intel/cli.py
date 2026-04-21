@@ -66,6 +66,28 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     session_parser.set_defaults(func=_cmd_session_init)
 
+    session_capture_parser = subparsers.add_parser(
+        "session-capture",
+        help="Open a browser window for manual login and capture storage_state.",
+    )
+    session_capture_parser.add_argument(
+        "--session-name",
+        required=True,
+        help="Logical session name used to name the captured state file.",
+    )
+    session_capture_parser.add_argument(
+        "--homepage-url",
+        default="https://www.douyin.com/",
+        help="Homepage URL to open before waiting for manual login.",
+    )
+    session_capture_parser.add_argument(
+        "--wait-seconds",
+        type=int,
+        default=120,
+        help="Seconds to wait before saving the storage_state.",
+    )
+    session_capture_parser.set_defaults(func=_cmd_session_capture)
+
     crawl_homepage_parser = subparsers.add_parser(
         "crawl-homepage",
         help="Run homepage collection skeleton for one homepage URL.",
@@ -269,6 +291,14 @@ def _cmd_import_targets(orchestrator: Orchestrator, args: argparse.Namespace) ->
 
 def _cmd_session_init(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
     return orchestrator.session_init(args.session_name)
+
+
+def _cmd_session_capture(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    return orchestrator.session_capture(
+        args.session_name,
+        homepage_url=args.homepage_url,
+        wait_seconds=args.wait_seconds,
+    )
 
 
 def _cmd_crawl_homepage(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
