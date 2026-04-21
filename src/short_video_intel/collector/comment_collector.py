@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
+import json
 from importlib.util import find_spec
+import re
+from html import unescape
 from typing import Any
 
 from ..config import AppConfig
@@ -238,6 +242,248 @@ def _reply_item_template() -> dict[str, Any]:
     }
 
 
+def _build_comment_item(
+    content: str,
+    video_url: str,
+    source: str,
+    content_hash: str,
+    raw: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    item = _comment_item_template()
+    item["comment_id"] = f"cmt_{content_hash[:16]}"
+    item["video_url"] = video_url
+    item["content"] = content
+    item["raw"] = {
+        "source": source,
+        "content_hash": content_hash,
+        **(raw or {}),
+    }
+    return item
+
+
+def _dedupe_comment_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        raw = item.get("raw") if isinstance(item, dict) else {}
+        content_hash = ""
+        if isinstance(raw, dict):
+            content_hash = str(raw.get("content_hash") or "")
+        if not content_hash:
+            content_hash = _hash_content(str(item.get("content", "") or ""))
+        if content_hash in seen:
+            continue
+        seen.add(content_hash)
+        deduped.append(item)
+    return deduped
+
+
+def _normalize_comment_content(text: str) -> str:
+    cleaned = unescape(str(text or ""))
+    cleaned = cleaned.replace("\u200b", " ").replace("\ufeff", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def _normalize_extracted_text(text: str) -> str:
+    cleaned = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", text)
+    cleaned = re.sub(r"(?is)<[^>]+>", " ", cleaned)
+    cleaned = unescape(cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def _looks_like_comment_text(text: str) -> bool:
+    if not text:
+        return False
+    if len(text) < 2:
+        return False
+    if len(text) > 500:
+        return False
+    if text.lower() in {"comment", "reply", "content", "text"}:
+        return False
+    if re.fullmatch(r"[\W_]+", text):
+        return False
+    if re.fullmatch(r"\d+(?:\.\d+)?", text):
+        return False
+    return True
+
+
+def _hash_content(text: str) -> str:
+    normalized = _normalize_comment_content(text)
+    return hashlib.sha1(normalized.encode("utf-8")).hexdigest()
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = _normalize_comment_content(value)
+        if not normalized:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
+
+
+def _unescape_jsonish_string(text: str) -> str:
+    try:
+        return bytes(text, "utf-8").decode("unicode_escape")
+    except Exception:
+        return text
+
+
+def _extract_comment_like_strings_from_jsonish_text(text: str) -> list[str]:
+    candidates: list[str] = []
+
+    double_quote_pattern = re.compile(
+        r'(?is)"(?:text|content|comment)"\s*:\s*"(?P<value>(?:\\.|[^"\\]){2,500}?)"'
+    )
+    single_quote_pattern = re.compile(
+        r"(?is)'(?:text|content|comment)'\s*:\s*'(?P<value>(?:\\.|[^'\\]){2,500}?)'"
+    )
+    for pattern in (double_quote_pattern, single_quote_pattern):
+        for match in pattern.finditer(text):
+            candidates.append(_unescape_jsonish_string(match.group("value") or ""))
+
+    fallback_double = re.compile(r'(?is)\b(?:text|content|comment)\b\s*:\s*"(?P<value>(?:\\.|[^"\\]){2,500}?)"')
+    fallback_single = re.compile(r"(?is)\b(?:text|content|comment)\b\s*:\s*'(?P<value>(?:\\.|[^'\\]){2,500}?)'")
+    for pattern in (fallback_double, fallback_single):
+        for match in pattern.finditer(text):
+            candidates.append(_unescape_jsonish_string(match.group("value") or ""))
+
+    return _dedupe_strings(candidates)
+
+
+def _extract_comment_like_strings_from_parsed_json(text: str) -> list[str]:
+    try:
+        data = json.loads(text)
+    except Exception:
+        return []
+
+    candidates: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                key_lower = str(key).lower()
+                if key_lower in {"text", "content", "comment", "commenttext", "comment_content", "commentcontent"}:
+                    if isinstance(value, str):
+                        candidates.append(value)
+                    elif isinstance(value, (int, float)):
+                        candidates.append(str(value))
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(data)
+    return _dedupe_strings(candidates)
+
+
+def _extract_comment_candidates_via_regex(html: str, video_url: str) -> tuple[list[dict[str, Any]], list[str]]:
+    warnings: list[str] = []
+    comments: list[dict[str, Any]] = []
+    seen_content_hashes: set[str] = set()
+
+    try:
+        fragment_pattern = re.compile(
+            r"(?is)<(?P<tag>div|span|p|li|a|article|section)(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=tag)>"
+        )
+        for match in fragment_pattern.finditer(html):
+            attrs = match.group("attrs") or ""
+            if not re.search(
+                r"(comment|reply|aweme-comment|feed-comment|comment-item|reply-item|comment_list|commentList)",
+                attrs,
+                re.IGNORECASE,
+            ):
+                continue
+            text = _normalize_extracted_text(match.group("body"))
+            if not _looks_like_comment_text(text):
+                continue
+            normalized = _normalize_comment_content(text)
+            content_hash = _hash_content(normalized)
+            if content_hash in seen_content_hashes:
+                continue
+            seen_content_hashes.add(content_hash)
+            comments.append(
+                _build_comment_item(
+                    content=normalized,
+                    video_url=video_url,
+                    source="dom_regex",
+                    content_hash=content_hash,
+                    raw={"source": "dom_regex", "match": "comment-like fragment"},
+                )
+            )
+            if len(comments) >= 20:
+                break
+        if comments:
+            warnings.append("dom_regex_extraction_used")
+    except Exception as exc:  # pragma: no cover - runtime dependent
+        warnings.append(f"dom regex extraction failed: {exc!s}")
+
+    return comments, warnings
+
+
+def _extract_comment_candidates_via_json(html: str, video_url: str) -> tuple[list[dict[str, Any]], list[str]]:
+    warnings: list[str] = []
+    comments: list[dict[str, Any]] = []
+    seen_content_hashes: set[str] = set()
+
+    try:
+        script_pattern = re.compile(r"(?is)<script\b([^>]*)>(.*?)</script>")
+        for attrs, script_body in script_pattern.findall(html):
+            attrs_lower = (attrs or "").lower()
+            script_text = unescape(script_body or "").strip()
+            if not script_text:
+                continue
+
+            hint = (
+                "application/json" in attrs_lower
+                or "ld+json" in attrs_lower
+                or "__next_data__" in attrs_lower
+                or "comment" in attrs_lower
+                or "content" in attrs_lower
+                or "comment" in script_text.lower()
+            )
+            if not hint:
+                continue
+
+            extracted_texts = _extract_comment_like_strings_from_jsonish_text(script_text)
+            if not extracted_texts and script_text[:1] in "{[":
+                extracted_texts = _extract_comment_like_strings_from_parsed_json(script_text)
+
+            for text in extracted_texts:
+                normalized = _normalize_comment_content(text)
+                if not _looks_like_comment_text(normalized):
+                    continue
+                content_hash = _hash_content(normalized)
+                if content_hash in seen_content_hashes:
+                    continue
+                seen_content_hashes.add(content_hash)
+                comments.append(
+                    _build_comment_item(
+                        content=normalized,
+                        video_url=video_url,
+                        source="dom_json",
+                        content_hash=content_hash,
+                        raw={"source": "dom_json", "script_hint": True},
+                    )
+                )
+                if len(comments) >= 20:
+                    break
+            if len(comments) >= 20:
+                break
+        if comments:
+            warnings.append("dom_json_extraction_used")
+    except Exception as exc:  # pragma: no cover - runtime dependent
+        warnings.append(f"dom json extraction failed: {exc!s}")
+
+    return comments, warnings
+
+
 def _extract_comments_from_dom(page) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     """
     Placeholder DOM extraction hook for comment scanning.
@@ -264,12 +510,30 @@ def _extract_comments_from_dom(page) -> tuple[list[dict[str, Any]], list[dict[st
     try:
         # NOTE: this read keeps the hook grounded in the live DOM without
         # committing to any platform-specific selector yet.
-        _ = page.content()
+        html = page.content()
+        page_url = str(getattr(page, "url", "") or "")
 
-        # TODO: replace the empty payload with normalized comment nodes.
-        # comments.append(_comment_item_template())
-        # replies.append(_reply_item_template())
+        regex_comments, regex_warnings = _extract_comment_candidates_via_regex(html, page_url)
+        meta["warnings"].append("dom_regex_extraction_used")
+        meta["warnings"].extend(regex_warnings)
+        if regex_comments:
+            comments.extend(regex_comments)
 
+        json_comments, json_warnings = _extract_comment_candidates_via_json(html, page_url)
+        meta["warnings"].append("dom_json_extraction_used")
+        meta["warnings"].extend(json_warnings)
+        if json_comments:
+            comments.extend(json_comments)
+
+        helper_failure_warnings = [
+            warning
+            for warning in (regex_warnings + json_warnings)
+            if "failed" in warning.lower()
+        ]
+        if helper_failure_warnings and not meta["stop_reason_detail"]:
+            meta["stop_reason_detail"] = "; ".join(helper_failure_warnings[:3])
+
+        comments = _dedupe_comment_items(comments)[:20]
         meta["dom_items_seen"] = len(comments) + len(replies)
         return comments, replies, meta
     except Exception as exc:  # pragma: no cover - runtime dependent

@@ -91,6 +91,8 @@ def collect_homepage_videos(config: Any, homepage_url: str, max_items: int = 50)
     diagnostics = extraction["diagnostics"]
     warnings = [
         "homepage html scanned with regex-based video URL extraction",
+        f"aweme_id_regex_matches={diagnostics.get('aweme_id_matches', 0)}",
+        f"aweme_id_resolution={'hit' if diagnostics.get('aweme_id_matches', 0) else 'miss'}",
         f"page_title={probe.get('title')!r}",
         f"final_url={probe.get('final_url')!r}",
         f"http_status={probe.get('http_status')!r}",
@@ -124,6 +126,8 @@ def _empty_diagnostics(homepage_url: str) -> dict[str, Any]:
         "extraction_version": "homepage-extract.v2",
         "total_matches": 0,
         "unique_video_ids": 0,
+        "aweme_id_matches": 0,
+        "merged_unique_video_ids": 0,
         "invalid_candidates": 0,
         "duplicate_candidates": 0,
         "homepage_origin": homepage_url,

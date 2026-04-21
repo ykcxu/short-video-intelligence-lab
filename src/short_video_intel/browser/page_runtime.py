@@ -24,6 +24,9 @@ from typing import Any
 _VIDEO_URL_RE = re.compile(
     r'(?P<url>(?:(?:https?:)?//[^"\'\s<>]+)?(?P<path>/video/(?P<video_id>[A-Za-z0-9_-]+)(?:\?[^"\'\s<>]*)?))'
 )
+_AWEME_ID_RE = re.compile(
+    r'(?:(?:["\']?aweme_id["\']?\s*[:=]\s*["\'](?P<aweme_id_quoted>[A-Za-z0-9_-]{6,128})["\'])|(?:["\']?aweme_id["\']?\s*[:=]\s*(?P<aweme_id_raw>[A-Za-z0-9_-]{6,128})))'
+)
 
 
 def detect_playwright() -> bool:
@@ -132,6 +135,8 @@ def extract_video_candidates_with_diagnostics(
                 "extraction_version": "homepage-extract.v2",
                 "total_matches": 0,
                 "unique_video_ids": 0,
+                "aweme_id_matches": 0,
+                "merged_unique_video_ids": 0,
                 "invalid_candidates": 0,
                 "duplicate_candidates": 0,
                 "homepage_origin": _homepage_origin(homepage_url),
@@ -141,8 +146,10 @@ def extract_video_candidates_with_diagnostics(
     search_space = str(html or "").replace(r"\/", "/")
     homepage_origin = _homepage_origin(homepage_url)
     seen_video_ids: set[str] = set()
+    url_unique_video_ids = 0
     videos: list[dict[str, Any]] = []
     total_matches = 0
+    aweme_id_matches = 0
     invalid_candidates = 0
     duplicate_candidates = 0
 
@@ -164,6 +171,7 @@ def extract_video_candidates_with_diagnostics(
 
         normalized_url = _normalize_video_url(raw_url, homepage_origin, video_id)
         seen_video_ids.add(video_id)
+        url_unique_video_ids = len(seen_video_ids)
         videos.append(
             {
                 "video_url": normalized_url,
@@ -176,12 +184,39 @@ def extract_video_candidates_with_diagnostics(
         if len(videos) >= max_items:
             break
 
+    if len(videos) < max_items:
+        for aweme_id in _extract_aweme_id_candidates(search_space):
+            aweme_id_matches += 1
+            if not _is_valid_video_id(aweme_id):
+                invalid_candidates += 1
+                continue
+
+            if aweme_id in seen_video_ids:
+                duplicate_candidates += 1
+                continue
+
+            normalized_url = _normalize_video_url(f"/video/{aweme_id}", homepage_origin, aweme_id)
+            seen_video_ids.add(aweme_id)
+            videos.append(
+                {
+                    "video_url": normalized_url,
+                    "video_id": aweme_id,
+                    "title": None,
+                    "publish_at": None,
+                }
+            )
+
+            if len(videos) >= max_items:
+                break
+
     return {
         "videos": videos,
         "diagnostics": {
             "extraction_version": "homepage-extract.v2",
             "total_matches": total_matches,
-            "unique_video_ids": len(seen_video_ids),
+            "unique_video_ids": url_unique_video_ids,
+            "aweme_id_matches": aweme_id_matches,
+            "merged_unique_video_ids": len(seen_video_ids),
             "invalid_candidates": invalid_candidates,
             "duplicate_candidates": duplicate_candidates,
             "homepage_origin": homepage_origin,
@@ -200,6 +235,15 @@ def _homepage_origin(homepage_url: str) -> str:
     if not parsed.scheme or not parsed.netloc:
         return str(homepage_url).strip()
     return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
+
+def _extract_aweme_id_candidates(search_space: str) -> list[str]:
+    candidates: list[str] = []
+    for match in _AWEME_ID_RE.finditer(search_space):
+        aweme_id = match.group("aweme_id_quoted") or match.group("aweme_id_raw")
+        if aweme_id:
+            candidates.append(aweme_id)
+    return candidates
 
 
 def _is_valid_video_id(video_id: Any) -> bool:
