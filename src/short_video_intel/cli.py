@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .analysis.reporting import analyze_positive_factors
 from .config import load_config
 from .orchestrator import Orchestrator
 
@@ -233,6 +234,24 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     full_batch_parser.set_defaults(func=_cmd_crawl_targets_full_batch)
 
+    analysis_parser = subparsers.add_parser(
+        "analyze-positive-factors",
+        help="Score positive factors from a full-batch artifact and export recommendations.",
+    )
+    analysis_parser.add_argument(
+        "--artifact",
+        type=Path,
+        default=None,
+        help="Path to a full-batch JSON artifact (default: latest under artifacts/collector/full-batch).",
+    )
+    analysis_parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional path to save the analysis result as JSON.",
+    )
+    analysis_parser.set_defaults(func=_cmd_analyze_positive_factors)
+
     return parser
 
 
@@ -300,6 +319,15 @@ def _cmd_crawl_targets_full_batch(orchestrator: Orchestrator, args: argparse.Nam
     )
 
 
+def _cmd_analyze_positive_factors(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    return analyze_positive_factors(
+        workspace=orchestrator.config.workspace,
+        artifacts_dir=orchestrator.config.artifacts_dir,
+        artifact=args.artifact,
+        output=args.output,
+    )
+
+
 def _print_result(result: dict[str, Any]) -> None:
     notice = result.pop("notice", None)
     if notice:
@@ -316,9 +344,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = args.func(orchestrator, args)
     except Exception as exc:  # pragma: no cover - defensive CLI guard
-        parser.exit(status=1, message=f"error: {exc}\n")
+        result = {
+            "ok": False,
+            "error": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
 
     _print_result(result)
+    if isinstance(result, dict) and result.get("ok") is False:
+        return 1
     return 0
 
 

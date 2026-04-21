@@ -1,0 +1,180 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Mapping
+
+from .positive_factors import build_recommendations, score_accounts_from_summary
+
+FULL_BATCH_ARTIFACT_SUBDIR = Path("collector") / "full-batch"
+
+
+class AnalysisError(Exception):
+    """Structured analysis failure used by the CLI wrapper."""
+
+
+def analyze_positive_factors(
+    *,
+    workspace: Path,
+    artifacts_dir: Path,
+    artifact: Path | None = None,
+    output: Path | None = None,
+) -> dict[str, Any]:
+    """Analyze a full-batch artifact and return scores plus recommendations."""
+
+    try:
+        resolved_artifact = _resolve_artifact_path(
+            workspace=workspace,
+            artifacts_dir=artifacts_dir,
+            artifact=artifact,
+        )
+        payload = _load_json(resolved_artifact)
+        summary_block = _extract_summary_block(payload)
+        scored = score_accounts_from_summary(summary_block)
+        recommendations = build_recommendations(scored)
+        result = {
+            "ok": True,
+            "analysis_type": "positive_factors",
+            "generated_at": scored.get("generated_at"),
+            "artifact_path": str(resolved_artifact),
+            "score": _build_score_block(scored),
+            "recommendations": recommendations,
+        }
+        if output is not None:
+            output_path = _resolve_output_path(workspace=workspace, output=output)
+            _write_json(output_path, result)
+            result["output_path"] = str(output_path)
+        return result
+    except AnalysisError as exc:
+        return _error_result(exc)
+    except Exception as exc:  # pragma: no cover - defensive wrapper
+        return _error_result(AnalysisError(f"{type(exc).__name__}: {exc}"))
+
+
+def _resolve_artifact_path(*, workspace: Path, artifacts_dir: Path, artifact: Path | None) -> Path:
+    if artifact is not None:
+        resolved = _resolve_user_path(workspace=workspace, value=artifact)
+        if resolved.is_dir():
+            resolved = _find_latest_full_batch_artifact(resolved)
+        if not resolved.exists():
+            raise AnalysisError(f"artifact not found: {resolved}")
+        if not resolved.is_file():
+            raise AnalysisError(f"artifact is not a file: {resolved}")
+        return resolved
+
+    return _find_latest_full_batch_artifact(artifacts_dir / FULL_BATCH_ARTIFACT_SUBDIR)
+
+
+def _find_latest_full_batch_artifact(root: Path) -> Path:
+    if not root.exists():
+        raise AnalysisError(f"full-batch artifact directory not found: {root}")
+    if root.is_file():
+        return root
+
+    candidates = [
+        path
+        for path in root.rglob("*.json")
+        if path.is_file() and FULL_BATCH_ARTIFACT_SUBDIR.as_posix() in path.as_posix()
+    ]
+    if not candidates:
+        raise AnalysisError(f"no full-batch artifact json files found under: {root}")
+
+    candidates.sort(key=lambda path: (path.stat().st_mtime, path.name), reverse=True)
+    return candidates[0]
+
+
+def _extract_summary_block(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        raise AnalysisError("artifact payload must be a JSON object")
+
+    for candidate in (
+        payload.get("summary_block"),
+        _mapping_get(payload.get("batch"), "summary_block"),
+        payload.get("summary"),
+        _mapping_get(payload.get("batch"), "summary"),
+    ):
+        if isinstance(candidate, Mapping):
+            return dict(candidate)
+
+    raise AnalysisError("summary block not found in artifact")
+
+
+def _build_score_block(scored: Mapping[str, Any]) -> dict[str, Any]:
+    accounts = list(scored.get("accounts") or [])
+    if not accounts:
+        overall_score = 0
+    else:
+        total_scores = [_safe_int(account.get("total_score")) for account in accounts if isinstance(account, Mapping)]
+        overall_score = round(sum(total_scores) / len(total_scores)) if total_scores else 0
+
+    top_accounts = []
+    for account in accounts[:3]:
+        if not isinstance(account, Mapping):
+            continue
+        top_accounts.append(
+            {
+                "rank": account.get("rank", 0),
+                "source_name": account.get("source_name", ""),
+                "homepage_url": account.get("homepage_url", ""),
+                "total_score": account.get("total_score", 0),
+                "signals": account.get("signals", {}),
+            }
+        )
+
+    return {
+        "overall": overall_score,
+        "scoring_version": scored.get("scoring_version", ""),
+        "weights": scored.get("weights", {}),
+        "baselines": scored.get("baselines", {}),
+        "accounts": accounts,
+        "top_accounts": top_accounts,
+    }
+
+
+def _resolve_output_path(*, workspace: Path, output: Path) -> Path:
+    resolved = _resolve_user_path(workspace=workspace, value=output)
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    return resolved
+
+
+def _load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _resolve_user_path(*, workspace: Path, value: Path) -> Path:
+    resolved = Path(value).expanduser()
+    if not resolved.is_absolute():
+        resolved = workspace / resolved
+    return resolved.resolve()
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+
+
+def _error_result(exc: AnalysisError) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "analysis_type": "positive_factors",
+        "error": {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        },
+        "score": None,
+        "recommendations": [],
+    }
+
+
+def _mapping_get(value: Any, key: str) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(key)
+    return None
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
