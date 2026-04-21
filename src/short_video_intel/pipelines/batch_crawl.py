@@ -121,6 +121,15 @@ def run_batch_full_collect(
 
     finished_at = _now_iso()
     duration_sec = round(monotonic() - started_monotonic, 6)
+    summary_block = _build_full_batch_summary(
+        results=results,
+        failures=failures,
+        total_targets=len(target_items),
+        with_video_detail=with_video_detail,
+        with_comments=with_comments,
+        comment_pages=normalized_comment_pages,
+        max_items=max_items,
+    )
 
     return {
         "started_at": started_at,
@@ -131,6 +140,7 @@ def run_batch_full_collect(
         "failed_count": len(failures),
         "results": results,
         "failures": failures,
+        "summary_block": summary_block,
         "with_video_detail": with_video_detail,
         "with_comments": with_comments,
         "comment_pages": normalized_comment_pages,
@@ -212,6 +222,86 @@ def _record_full_outcome(
                 "error": outcome["error"],
             }
         )
+
+
+def _build_full_batch_summary(
+    *,
+    results: list[dict[str, Any]],
+    failures: list[dict[str, Any]],
+    total_targets: int,
+    with_video_detail: bool,
+    with_comments: bool,
+    comment_pages: int,
+    max_items: int,
+) -> dict[str, Any]:
+    account_summary: list[dict[str, Any]] = []
+    total_videos_seen = 0
+    total_detail_success = 0
+    total_detail_attempted = 0
+    total_comment_success = 0
+    total_comment_attempted = 0
+
+    for item in results:
+        target = item.get("target") or {}
+        homepage_result = item.get("homepage_result") or {}
+        video_items = item.get("video_items") or []
+        summary = item.get("summary") or {}
+
+        videos_seen = _safe_int(summary.get("homepage_videos_seen"), default=len(video_items))
+        detail_success = _safe_int(summary.get("detail_succeeded"))
+        detail_attempted = _safe_int(summary.get("detail_attempted"))
+        comments_success = _safe_int(summary.get("comments_succeeded"))
+        comments_attempted = _safe_int(summary.get("comments_attempted"))
+        warnings_count = _count_full_batch_warnings(item)
+
+        total_videos_seen += videos_seen
+        total_detail_success += detail_success
+        total_detail_attempted += detail_attempted
+        total_comment_success += comments_success
+        total_comment_attempted += comments_attempted
+
+        account_summary.append(
+            {
+                "homepage_url": target.get("homepage_url"),
+                "source_name": target.get("source_name"),
+                "videos_seen": videos_seen,
+                "detail_success": detail_success,
+                "comments_success": comments_success,
+                "warnings_count": warnings_count,
+                "backend": homepage_result.get("backend"),
+                "extraction_version": homepage_result.get("extraction_version"),
+            }
+        )
+
+    detail_success_rate = (
+        round(total_detail_success / total_detail_attempted, 6)
+        if total_detail_attempted
+        else 0.0
+    )
+    comment_success_rate = (
+        round(total_comment_success / total_comment_attempted, 6)
+        if total_comment_attempted
+        else 0.0
+    )
+
+    return {
+        "account_summary": account_summary,
+        "global_summary": {
+            "target_count": total_targets,
+            "video_total": total_videos_seen,
+            "detail_attempted": total_detail_attempted,
+            "detail_success_count": total_detail_success,
+            "detail_success_rate": detail_success_rate,
+            "comment_attempted": total_comment_attempted,
+            "comment_success_count": total_comment_success,
+            "comment_success_rate": comment_success_rate,
+            "failed_count": len(failures),
+            "with_video_detail": with_video_detail,
+            "with_comments": with_comments,
+            "comment_pages": comment_pages,
+            "max_items": max_items,
+        },
+    }
 
 
 def _collect_single_full_target(
@@ -339,6 +429,46 @@ def _extract_video_url(candidate: dict[str, Any]) -> str:
     if video_id:
         return f"https://www.douyin.com/video/{video_id}"
     return ""
+
+
+def _count_full_batch_warnings(item: dict[str, Any]) -> int:
+    warning_count = 0
+
+    homepage_result = item.get("homepage_result")
+    if isinstance(homepage_result, dict):
+        warning_count += len(homepage_result.get("warnings") or [])
+        diagnostics = homepage_result.get("diagnostics")
+        if isinstance(diagnostics, dict):
+            warning_count += len(diagnostics.get("warnings") or [])
+
+    for video_item in item.get("video_items") or []:
+        if not isinstance(video_item, dict):
+            continue
+        detail_result = video_item.get("detail_result")
+        if isinstance(detail_result, dict):
+            warning_count += len(detail_result.get("warnings") or [])
+        elif video_item.get("detail_error"):
+            warning_count += 1
+
+        comments_result = video_item.get("comments_result")
+        if isinstance(comments_result, dict):
+            warning_count += len(comments_result.get("warnings") or [])
+            scan_meta = comments_result.get("scan_meta")
+            if isinstance(scan_meta, dict):
+                warning_count += len(scan_meta.get("warnings") or [])
+        elif video_item.get("comments_error"):
+            warning_count += 1
+
+    return warning_count
+
+
+def _safe_int(value: Any, *, default: int = 0) -> int:
+    try:
+        if value is None:
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _now_iso() -> str:

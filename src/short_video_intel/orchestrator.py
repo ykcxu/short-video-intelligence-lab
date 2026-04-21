@@ -230,6 +230,7 @@ class Orchestrator:
             "source": "db" if from_db else "file",
             "targets_loaded": len(targets),
             "batch": batch_result,
+            "summary": batch_result.get("summary_block", {}),
         }
 
         if persist_db:
@@ -280,6 +281,7 @@ class Orchestrator:
             "source": "db" if from_db else "file",
             "targets_loaded": len(targets),
             "batch": batch_result,
+            "summary": batch_result.get("summary_block", {}),
         }
 
         artifact_path = self._write_artifact(
