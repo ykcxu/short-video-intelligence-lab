@@ -18,6 +18,13 @@
 - Python 项目基础骨架
 - 后续迭代路线图
 
+## 配置与运行
+
+- 复制 `config.yaml.example` 为 `config.yaml` 后再按需调整
+- 如果根目录下没有 `config.yaml`，程序会回退到示例默认值
+- 配置里的相对路径都会按 workspace 目录统一解析
+- 当前 CLI 入口仍是 `short-video-intel`
+
 ## 目录结构
 
 ```text

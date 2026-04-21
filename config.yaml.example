@@ -1,0 +1,34 @@
+# Copy this file to config.yaml and adjust as needed.
+# Relative paths are resolved from the workspace directory.
+
+app:
+  name: short-video-intelligence-lab
+  debug: false
+  timezone: Asia/Shanghai
+
+database:
+  url: sqlite:///data/app.db
+  echo: false
+
+browser:
+  engine: playwright
+  headless: true
+  timeout_ms: 30000
+  locale: zh-CN
+  user_agent: null
+  storage_state: state/browser_state.json
+  user_data_dir: state/browser_profile
+
+paths:
+  data_dir: data
+  artifacts_dir: artifacts
+  state_dir: state
+  downloads_dir: downloads
+
+concurrency:
+  download_workers: 4
+  browser_workers: 1
+  analysis_workers: 4
+  max_tasks: 8
+  retry_count: 3
+  request_timeout_sec: 30.0

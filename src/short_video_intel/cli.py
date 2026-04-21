@@ -6,12 +6,24 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .config import default_config
+from .config import load_config
 from .orchestrator import Orchestrator
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="short-video-intel")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Optional config file path (default: ./config.yaml).",
+    )
+    parser.add_argument(
+        "--workspace",
+        type=Path,
+        default=None,
+        help="Optional workspace root path (default: current directory).",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser(
@@ -83,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    orchestrator = Orchestrator(default_config())
+    orchestrator = Orchestrator(load_config(path=args.config, workspace=args.workspace))
 
     try:
         result = args.func(orchestrator, args)

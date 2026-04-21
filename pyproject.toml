@@ -7,7 +7,10 @@ requires-python = ">=3.11"
 authors = [
   { name = "OpenAI Codex" }
 ]
-dependencies = []
+dependencies = [
+  "PyYAML>=6.0",
+  "SQLAlchemy>=2.0",
+]
 
 [project.scripts]
 short-video-intel = "short_video_intel.cli:main"
