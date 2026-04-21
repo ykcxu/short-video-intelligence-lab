@@ -82,8 +82,12 @@ def collect_homepage_videos(config: Any, homepage_url: str, max_items: int = 50)
             ],
         }
 
+    html_blob = probe.get("page_html", "") or ""
+    dom_hrefs = probe.get("dom_hrefs") if isinstance(probe.get("dom_hrefs"), list) else []
+    if dom_hrefs:
+        html_blob = f"{html_blob}\n" + "\n".join(str(item) for item in dom_hrefs)
     extraction = extract_video_candidates_with_diagnostics(
-        probe.get("page_html", ""),
+        html_blob,
         probe.get("final_url", normalized_homepage_url),
         max_items=max_items,
     )
@@ -96,6 +100,7 @@ def collect_homepage_videos(config: Any, homepage_url: str, max_items: int = 50)
         f"page_title={probe.get('title')!r}",
         f"final_url={probe.get('final_url')!r}",
         f"http_status={probe.get('http_status')!r}",
+        f"dom_href_count={len(dom_hrefs)}",
         f"extracted_count={len(videos)}",
         f"max_items={max_items}",
     ]
@@ -127,6 +132,7 @@ def _empty_diagnostics(homepage_url: str) -> dict[str, Any]:
         "total_matches": 0,
         "unique_video_ids": 0,
         "aweme_id_matches": 0,
+        "id_key_matches": 0,
         "merged_unique_video_ids": 0,
         "invalid_candidates": 0,
         "duplicate_candidates": 0,

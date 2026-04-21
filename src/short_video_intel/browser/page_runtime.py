@@ -24,8 +24,8 @@ from typing import Any
 _VIDEO_URL_RE = re.compile(
     r'(?P<url>(?:(?:https?:)?//[^"\'\s<>]+)?(?P<path>/video/(?P<video_id>[A-Za-z0-9_-]+)(?:\?[^"\'\s<>]*)?))'
 )
-_AWEME_ID_RE = re.compile(
-    r'(?:(?:["\']?aweme_id["\']?\s*[:=]\s*["\'](?P<aweme_id_quoted>[A-Za-z0-9_-]{6,128})["\'])|(?:["\']?aweme_id["\']?\s*[:=]\s*(?P<aweme_id_raw>[A-Za-z0-9_-]{6,128})))'
+_ID_KEY_RE = re.compile(
+    r'(?:(?:["\']?(?:aweme_id|modal_id|item_id|group_id)["\']?\s*[:=]\s*["\'](?P<id_quoted>[A-Za-z0-9_-]{6,128})["\'])|(?:["\']?(?:aweme_id|modal_id|item_id|group_id)["\']?\s*[:=]\s*(?P<id_raw>[A-Za-z0-9_-]{6,128})))'
 )
 
 
@@ -83,7 +83,46 @@ def run_playwright_homepage_probe(config: Any, homepage_url: str) -> dict[str, A
             context = launched_browser.new_context(**context_kwargs)
             page = context.new_page()
             response = page.goto(homepage_url, wait_until="domcontentloaded", timeout=timeout_ms)
+            try:
+                page.wait_for_load_state("networkidle", timeout=min(timeout_ms, 8_000))
+            except Exception:
+                pass
+            # Best-effort: switch to "作品" tab so video anchors are rendered.
+            for selector in (
+                "text=作品",
+                "text=全部作品",
+                "[data-e2e='user-post-tab']",
+                "[class*='post-tab']",
+            ):
+                try:
+                    target = page.locator(selector).first
+                    if target.count() > 0:
+                        target.click(timeout=1_500)
+                        page.wait_for_timeout(600)
+                        break
+                except Exception:
+                    continue
+            for _ in range(3):
+                try:
+                    page.mouse.wheel(0, 1800)
+                    page.wait_for_timeout(400)
+                except Exception:
+                    break
             page_html = page.content()
+            try:
+                dom_hrefs = page.evaluate(
+                    """() => {
+                        const out = [];
+                        for (const a of Array.from(document.querySelectorAll('a[href]'))) {
+                            const href = (a.getAttribute('href') || '').trim();
+                            if (!href) continue;
+                            out.push(href);
+                        }
+                        return out.slice(0, 4000);
+                    }"""
+                )
+            except Exception:
+                dom_hrefs = []
 
             return {
                 "homepage_url": homepage_url,
@@ -91,6 +130,7 @@ def run_playwright_homepage_probe(config: Any, homepage_url: str) -> dict[str, A
                 "title": page.title(),
                 "http_status": response.status if response is not None else None,
                 "page_html": page_html,
+                "dom_hrefs": dom_hrefs,
                 "backend": "playwright/minimal",
                 "engine": engine,
                 "headless": headless,
@@ -150,6 +190,7 @@ def extract_video_candidates_with_diagnostics(
     videos: list[dict[str, Any]] = []
     total_matches = 0
     aweme_id_matches = 0
+    id_key_matches = 0
     invalid_candidates = 0
     duplicate_candidates = 0
 
@@ -209,6 +250,28 @@ def extract_video_candidates_with_diagnostics(
             if len(videos) >= max_items:
                 break
 
+    if len(videos) < max_items:
+        for key_id in _extract_keyed_video_id_candidates(search_space):
+            id_key_matches += 1
+            if not _is_valid_video_id(key_id):
+                invalid_candidates += 1
+                continue
+            if key_id in seen_video_ids:
+                duplicate_candidates += 1
+                continue
+            normalized_url = _normalize_video_url(f"/video/{key_id}", homepage_origin, key_id)
+            seen_video_ids.add(key_id)
+            videos.append(
+                {
+                    "video_url": normalized_url,
+                    "video_id": key_id,
+                    "title": None,
+                    "publish_at": None,
+                }
+            )
+            if len(videos) >= max_items:
+                break
+
     return {
         "videos": videos,
         "diagnostics": {
@@ -216,6 +279,7 @@ def extract_video_candidates_with_diagnostics(
             "total_matches": total_matches,
             "unique_video_ids": url_unique_video_ids,
             "aweme_id_matches": aweme_id_matches,
+            "id_key_matches": id_key_matches,
             "merged_unique_video_ids": len(seen_video_ids),
             "invalid_candidates": invalid_candidates,
             "duplicate_candidates": duplicate_candidates,
@@ -238,11 +302,22 @@ def _homepage_origin(homepage_url: str) -> str:
 
 
 def _extract_aweme_id_candidates(search_space: str) -> list[str]:
+    return _extract_keyed_video_id_candidates(search_space, only_aweme=True)
+
+
+def _extract_keyed_video_id_candidates(search_space: str, only_aweme: bool = False) -> list[str]:
     candidates: list[str] = []
-    for match in _AWEME_ID_RE.finditer(search_space):
-        aweme_id = match.group("aweme_id_quoted") or match.group("aweme_id_raw")
-        if aweme_id:
-            candidates.append(aweme_id)
+    if only_aweme:
+        aweme_only = re.compile(
+            r'(?:(?:["\']?aweme_id["\']?\s*[:=]\s*["\'](?P<id_quoted>[A-Za-z0-9_-]{6,128})["\'])|(?:["\']?aweme_id["\']?\s*[:=]\s*(?P<id_raw>[A-Za-z0-9_-]{6,128})))'
+        )
+        pattern = aweme_only
+    else:
+        pattern = _ID_KEY_RE
+    for match in pattern.finditer(search_space):
+        candidate_id = match.group("id_quoted") or match.group("id_raw")
+        if candidate_id:
+            candidates.append(candidate_id)
     return candidates
 
 
@@ -252,6 +327,8 @@ def _is_valid_video_id(video_id: Any) -> bool:
 
     candidate = video_id.strip()
     if len(candidate) < 6 or len(candidate) > 128:
+        return False
+    if candidate.lower() in {"undefined", "null", "none", "nan", "false", "true"}:
         return False
 
     return bool(re.fullmatch(r"[A-Za-z0-9_-]+", candidate))
