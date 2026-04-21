@@ -41,6 +41,118 @@
 
 `import-targets` 现支持 `csv/json/tsv`，并支持中文表头映射（如“主页链接/账号名/分类/部门”）。
 
+## 一期数据收集 + 二期积极因素评分雏形操作手册
+
+这份手册按**一期优先收集数据、二期基于 `summary_block` 做积极因素评分**来组织。  
+当前建议先把采集链路跑稳，再做评分和推荐。
+
+### 1. 一期推荐执行顺序
+
+1. `bootstrap`：初始化 workspace 目录
+2. `init-db`：初始化数据库底座
+3. `import-targets`：导入主页清单
+4. `session-init`：生成或刷新会话状态
+5. `crawl-targets-full-batch`：一次性跑主页 + 视频详情 + 评论
+6. `persist-db`：把批次结果写回数据库
+
+### 2. full-batch 的推荐用法
+
+如果你的目标是“一次跑完一期可观测数据”，建议直接使用：
+
+```powershell
+short-video-intel crawl-targets-full-batch `
+  --source-file inputs/douyin_homepages_seed.tsv `
+  --with-video-detail `
+  --with-comments `
+  --comment-pages 3 `
+  --workers 2 `
+  --persist-db
+```
+
+如果你已经把目标导入数据库，也可以用：
+
+```powershell
+short-video-intel crawl-targets-full-batch `
+  --from-db `
+  --limit 20 `
+  --with-video-detail `
+  --with-comments `
+  --comment-pages 3 `
+  --persist-db
+```
+
+### 3. 如何查看 `summary_block`
+
+`crawl-targets-full-batch` 的输出会包含一个 `summary` 字段，其中的核心汇总就是 `summary_block`。  
+推荐先把结果保存下来，再单独查看：
+
+```powershell
+short-video-intel crawl-targets-full-batch `
+  --source-file inputs/douyin_homepages_seed.tsv `
+  --with-video-detail `
+  --with-comments `
+  --comment-pages 3 `
+  --workers 2 `
+  --persist-db |
+  Tee-Object -FilePath .\artifacts\full-batch.json
+```
+
+然后读取 `summary_block`：
+
+```powershell
+(Get-Content .\artifacts\full-batch.json -Raw | ConvertFrom-Json).summary.summary_block |
+  ConvertTo-Json -Depth 10
+```
+
+`summary_block` 里最值得先看的字段是：
+
+- `account_summary`：每个主页的汇总条目
+- `global_summary`：整批总体统计
+- `account_summary[].videos_seen`：每个主页抓到的视频数
+- `account_summary[].detail_success`：视频详情可成功提取的数量
+- `account_summary[].comments_success`：评论侧可成功提取的数量
+- `account_summary[].warnings_count`：该主页在批次里的 warning 数
+
+### 4. 二期评分命令（预期）
+
+二期雏形会增加一个**只消费 `summary_block`** 的积极因素评分命令。  
+下面是预期命令形态，主线实现后即可直接使用：
+
+```powershell
+short-video-intel analyze-positive-factors `
+  --summary-file .\artifacts\full-batch.json `
+  --output .\artifacts\positive-factors.json
+```
+
+这个命令的定位是：
+
+- 输入：一期 full-batch 结果里的 `summary_block`
+- 输出：账号积极因素分数、排序、建议
+- 不读取原始视频内容，不抢一期采集资源
+
+### 5. 一期与二期边界
+
+#### 一期优先做的事
+
+- 主页目标导入
+- 主页视频发现
+- 视频详情与评论采集
+- 下载任务与媒体资产归档
+- 批次结果落库
+
+#### 二期再做的事
+
+- 基于 `summary_block` 的积极因素评分
+- 账号排序与对比
+- 规则版推荐
+- 后续再逐步接入更细的视觉 / 话术 / 模型特征
+
+#### 边界原则
+
+- 一期先保证“数据收集可重复、可落库、可复盘”
+- 二期只消费一期的汇总结果，不倒逼一期增加复杂分析
+- 如果一期数据不稳，优先修采集，再谈评分
+
 ## 目标校准
 
 已在 `docs/goal-calibration.md` 固化当前目标与一期范围。

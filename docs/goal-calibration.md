@@ -43,10 +43,29 @@
 
 ## 近期执行建议
 
-1. 用 `inputs/douyin_homepages_seed.tsv` 跑通导入与采集批处理  
-2. 累积首批可复盘数据（建议先覆盖 9 个账号，连跑多次快照）  
-3. 固化失败重试与 incomplete 标记  
-4. 再进入“特征工程 + 账号积极因素分析”阶段
+1. 先用 `inputs/douyin_homepages_seed.tsv` 跑通导入与采集批处理。  
+2. 优先把 `with-video-detail + with-comments + persist-db` 跑稳，再扩大主页数。  
+3. 采集输出务必保留原始 JSON 和 `summary_block`，方便后续回放与评分。  
+4. 如果一期采集不稳定，先修采集完整性，不要先堆评分逻辑。
+
+### 一期推荐命令
+
+```powershell
+short-video-intel crawl-targets-full-batch `
+  --source-file inputs/douyin_homepages_seed.tsv `
+  --with-video-detail `
+  --with-comments `
+  --comment-pages 3 `
+  --workers 2 `
+  --persist-db
+```
+
+### 查看 `summary_block`
+
+```powershell
+(Get-Content .\artifacts\full-batch.json -Raw | ConvertFrom-Json).summary.summary_block |
+  ConvertTo-Json -Depth 10
+```
 
 ---
 
@@ -71,6 +90,16 @@
 - `account_summary.warnings_count`
 - `global_summary` 中的整体成功率 / 失败率
 
+### 预期命令形态
+
+主线实现后，建议用一个只消费 `summary_block` 的命令来承接二期雏形，例如：
+
+```powershell
+short-video-intel analyze-positive-factors `
+  --summary-file .\artifacts\full-batch.json `
+  --output .\artifacts\positive-factors.json
+```
+
 ### 目前的规则思路
 
 这只是一个**雏形版本**，还不是机器学习模型，也不直接看视频内容：
@@ -86,3 +115,10 @@
 - 这是**规则版**，用于先把“可解释的筛选逻辑”跑起来
 - 结果适合做账号排序、初筛和二期特征工程的参考
 - 后续可以再升级成“规则 + 特征 + 模型”的版本
+
+### 一期与二期边界说明
+
+- **一期优先级最高**：主页导入、视频发现、评论快照、下载、落库、产物归档
+- **二期不抢一期输入**：积极因素评分只消费一期产出的 `summary_block`
+- **二期不替代采集**：评分只能辅助排序和复盘，不能代替真实数据收集
+- **一旦一期数据不稳**：先修采集完整性，再扩展评分规则
