@@ -69,14 +69,17 @@ def load_targets_from_db(
 def _normalize_db_target(target: HomepageTarget) -> dict[str, Any]:
     """Convert a ``HomepageTarget`` ORM row into the shared target schema."""
 
-    return {
+    normalized = {
         "homepage_url": _normalize_text(target.homepage_url),
         "source_name": _normalize_text(target.source_name),
         "category_lv1": _normalize_text(target.category_lv1),
         "category_lv2": _normalize_text(target.category_lv2),
         "tags_json": _normalize_tags_json(target.tags_json),
         "status": _normalize_text(target.status) or "active",
+        "platform": _normalize_text(target.platform) or "douyin",
     }
+
+    return normalized
 
 
 def _normalize_target_record(
