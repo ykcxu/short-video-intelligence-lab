@@ -25,6 +25,17 @@
 - 配置里的相对路径都会按 workspace 目录统一解析
 - 当前 CLI 入口仍是 `short-video-intel`
 
+### 当前可用 CLI（骨架）
+
+- `short-video-intel bootstrap`
+- `short-video-intel init-db`
+- `short-video-intel import-targets --input targets.csv`
+- `short-video-intel session-init --session-name main`
+- `short-video-intel crawl-homepage --homepage-url <url>`
+- `short-video-intel crawl-video-detail --video-url <url>`
+- `short-video-intel crawl-video-comments --video-url <url>`
+- `short-video-intel build-download-jobs --videos-file videos.json --run`
+
 ## 目录结构
 
 ```text

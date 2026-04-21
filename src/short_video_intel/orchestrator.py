@@ -8,8 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from .browser.session_manager import init_session_state
+from .collector.comment_collector import collect_video_comments
+from .collector.homepage_collector import collect_homepage_videos
 from .collector.targets_loader import load_targets_from_path
+from .collector.video_collector import collect_video_detail
 from .config import AppConfig
+from .downloader import build_download_jobs, run_download_jobs
 
 
 class Orchestrator:
@@ -160,6 +164,82 @@ class Orchestrator:
             result["notice"] = "[session-init] 未检测到 Playwright，仅生成占位 state。"
         return result
 
+    def crawl_homepage(self, homepage_url: str, *, max_items: int = 50) -> dict[str, Any]:
+        self.bootstrap()
+        result = collect_homepage_videos(self.config, homepage_url=homepage_url, max_items=max_items)
+        artifact_path = self._write_artifact(
+            category="collector/homepage",
+            stem=f"homepage_{self._hash_text(homepage_url)}",
+            payload=result,
+        )
+        result["artifact_path"] = str(artifact_path)
+        return result
+
+    def crawl_video_detail(self, video_url: str) -> dict[str, Any]:
+        self.bootstrap()
+        result = collect_video_detail(self.config, video_url=video_url)
+        artifact_path = self._write_artifact(
+            category="collector/video",
+            stem=f"video_detail_{self._hash_text(video_url)}",
+            payload=result,
+        )
+        result["artifact_path"] = str(artifact_path)
+        return result
+
+    def crawl_video_comments(self, video_url: str, *, max_pages: int = 3) -> dict[str, Any]:
+        self.bootstrap()
+        result = collect_video_comments(self.config, video_url=video_url, max_pages=max_pages)
+        artifact_path = self._write_artifact(
+            category="collector/comments",
+            stem=f"video_comments_{self._hash_text(video_url)}",
+            payload=result,
+        )
+        result["artifact_path"] = str(artifact_path)
+        return result
+
+    def create_download_jobs(
+        self,
+        *,
+        videos_file: str | Path,
+        output_dir: str | Path | None = None,
+        run: bool = False,
+    ) -> dict[str, Any]:
+        self.bootstrap()
+        videos_path = Path(videos_file)
+        if not videos_path.exists():
+            raise FileNotFoundError(videos_path)
+
+        with videos_path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+
+        if not isinstance(payload, list):
+            raise ValueError("videos_file must contain a JSON array")
+
+        resolved_output_dir = Path(output_dir) if output_dir else (self.config.downloads_dir / "stub")
+        jobs = build_download_jobs(payload, resolved_output_dir)
+        artifact_path = self._write_artifact(
+            category="downloader/jobs",
+            stem=f"download_jobs_{videos_path.stem}",
+            payload={"jobs": jobs},
+        )
+        result: dict[str, Any] = {
+            "videos_file": str(videos_path),
+            "jobs_count": len(jobs),
+            "jobs_artifact_path": str(artifact_path),
+            "preview": jobs[:3],
+        }
+        if run:
+            run_results = run_download_jobs(jobs)
+            run_artifact_path = self._write_artifact(
+                category="downloader/results",
+                stem=f"download_results_{videos_path.stem}",
+                payload={"results": run_results},
+            )
+            result["run_results_count"] = len(run_results)
+            result["run_artifact_path"] = str(run_artifact_path)
+            result["run_preview"] = run_results[:3]
+        return result
+
     def _core_directories(self) -> dict[str, Path]:
         return {
             "data_dir": self.config.data_dir,
@@ -220,3 +300,25 @@ class Orchestrator:
                 return [str(item) for item in parsed]
             return [str(parsed)]
         return [str(value)]
+
+    def _write_artifact(self, *, category: str, stem: str, payload: dict[str, Any]) -> Path:
+        category_path = self.config.artifacts_dir / category
+        category_path.mkdir(parents=True, exist_ok=True)
+        filename = f"{stem}_{self._now_token()}.json"
+        output_path = category_path / filename
+        with output_path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+        return output_path
+
+    def _hash_text(self, text: str) -> str:
+        return hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
+
+    def _now_token(self) -> str:
+        token = self._now_iso().replace(":", "").replace("-", "").replace(".", "")
+        token = token.replace("+", "_plus_").replace("Z", "_z_")
+        return token
+
+    def _now_iso(self) -> str:
+        from datetime import datetime, timezone
+
+        return datetime.now(timezone.utc).isoformat()
