@@ -59,6 +59,11 @@ def collect_video_comments(
                 "backend": "stub:no_playwright",
                 "requested_pages": requested_pages,
                 "warnings": ["playwright is not installed"],
+                "extraction_diagnostics": {
+                    "source_hits": {"regex_fragments": 0, "script_tags": 0, "jsonish_strings": 0, "json_objects": 0},
+                    "parse_failures": 0,
+                    "final_deduped_count": 0,
+                },
                 "backend_version": "comment-collector.v2",
             },
         }
@@ -94,6 +99,11 @@ def _collect_with_playwright_comments(
                 "backend": "playwright:placeholder-error",
                 "requested_pages": max_pages,
                 "warnings": ["playwright import failed"],
+                "extraction_diagnostics": {
+                    "source_hits": {"regex_fragments": 0, "script_tags": 0, "jsonish_strings": 0, "json_objects": 0},
+                    "parse_failures": 0,
+                    "final_deduped_count": 0,
+                },
                 "backend_version": "comment-collector.v2",
             },
         }
@@ -109,6 +119,11 @@ def _collect_with_playwright_comments(
     stop_reason_detail: str | None = None
     dom_extract_attempted = False
     dom_items_seen = 0
+    extraction_diagnostics: dict[str, Any] = {
+        "source_hits": {"regex_fragments": 0, "script_tags": 0, "jsonish_strings": 0, "json_objects": 0},
+        "parse_failures": 0,
+        "final_deduped_count": 0,
+    }
     comments: list[dict[str, Any]] = []
     replies: list[dict[str, Any]] = []
 
@@ -142,6 +157,20 @@ def _collect_with_playwright_comments(
                             dom_meta.get("dom_extract_attempted", False)
                         )
                         dom_items_seen += int(dom_meta.get("dom_items_seen", 0) or 0)
+                        dom_diag = dom_meta.get("extraction_diagnostics") or {}
+                        dom_hits = dom_diag.get("source_hits") or {}
+                        extraction_diagnostics["source_hits"]["regex_fragments"] += int(
+                            dom_hits.get("regex_fragments") or 0
+                        )
+                        extraction_diagnostics["source_hits"]["script_tags"] += int(dom_hits.get("script_tags") or 0)
+                        extraction_diagnostics["source_hits"]["jsonish_strings"] += int(
+                            dom_hits.get("jsonish_strings") or 0
+                        )
+                        extraction_diagnostics["source_hits"]["json_objects"] += int(
+                            dom_hits.get("json_objects") or 0
+                        )
+                        extraction_diagnostics["parse_failures"] += int(dom_diag.get("parse_failures") or 0)
+                        extraction_diagnostics["final_deduped_count"] = len(_dedupe_comment_items(comments))
                         helper_stop_reason = dom_meta.get("stop_reason")
                         helper_stop_detail = dom_meta.get("stop_reason_detail")
                         helper_warnings = dom_meta.get("warnings") or []
@@ -180,6 +209,7 @@ def _collect_with_playwright_comments(
                 "requested_pages": max_pages,
                 "dom_extract_attempted": dom_extract_attempted,
                 "dom_items_seen": dom_items_seen,
+                "extraction_diagnostics": extraction_diagnostics,
                 "backend_version": "comment-collector.v2",
             },
         }
@@ -199,6 +229,7 @@ def _collect_with_playwright_comments(
             "requested_pages": max_pages,
             "dom_extract_attempted": dom_extract_attempted,
             "dom_items_seen": dom_items_seen,
+            "extraction_diagnostics": extraction_diagnostics,
             "backend_version": "comment-collector.v2",
         },
     }
@@ -259,6 +290,51 @@ def _build_comment_item(
         **(raw or {}),
     }
     return item
+
+
+def _to_count(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return max(0, int(value))
+    text = str(value or "").strip().lower()
+    if not text:
+        return 0
+    cleaned = text.replace(",", "")
+    multiplier = 1.0
+    if cleaned.endswith(("w", "万")):
+        multiplier = 10_000.0
+        cleaned = cleaned[:-1]
+    try:
+        return max(0, int(float(cleaned) * multiplier))
+    except Exception:
+        return 0
+
+
+def _extract_lightweight_comment_signals(text: str) -> dict[str, Any]:
+    normalized = _normalize_comment_content(text)
+    signals: dict[str, Any] = {"author_name": "", "like_count": 0, "reply_count": 0}
+    if not normalized:
+        return signals
+
+    author_match = re.search(r"(?:作者|author)\s*[:：]\s*([^\s，,。:：]{1,32})", normalized, re.IGNORECASE)
+    if author_match:
+        signals["author_name"] = _normalize_comment_content(author_match.group(1))
+
+    like_match = re.search(r"([0-9]+(?:\.[0-9]+)?(?:w|万)?)\s*赞", normalized, re.IGNORECASE)
+    if like_match:
+        signals["like_count"] = _to_count(like_match.group(1))
+
+    reply_match = re.search(
+        r"(?:回复\s*([0-9]+(?:\.[0-9]+)?(?:w|万)?)|([0-9]+(?:\.[0-9]+)?(?:w|万)?)\s*(?:条)?回复)",
+        normalized,
+        re.IGNORECASE,
+    )
+    if reply_match:
+        reply_value = reply_match.group(1) or reply_match.group(2) or ""
+        signals["reply_count"] = _to_count(reply_value)
+
+    return signals
 
 
 def _dedupe_comment_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -383,10 +459,102 @@ def _extract_comment_like_strings_from_parsed_json(text: str) -> list[str]:
     return _dedupe_strings(candidates)
 
 
-def _extract_comment_candidates_via_regex(html: str, video_url: str) -> tuple[list[dict[str, Any]], list[str]]:
+def _extract_author_name_from_node(node: Any) -> str:
+    if not isinstance(node, dict):
+        return ""
+
+    direct_keys = ("author_name", "nickname", "nick_name", "user_name", "screen_name", "name")
+    for key in direct_keys:
+        value = node.get(key)
+        if isinstance(value, str):
+            normalized = _normalize_comment_content(value)
+            if normalized:
+                return normalized
+
+    author_value = node.get("author")
+    if isinstance(author_value, str):
+        normalized = _normalize_comment_content(author_value)
+        if normalized:
+            return normalized
+    if isinstance(author_value, dict):
+        nested = _extract_author_name_from_node(author_value)
+        if nested:
+            return nested
+
+    for key in ("user", "user_info", "author_info", "owner"):
+        value = node.get(key)
+        if isinstance(value, dict):
+            nested = _extract_author_name_from_node(value)
+            if nested:
+                return nested
+
+    return ""
+
+
+def _extract_comment_like_objects_from_parsed_json(
+    text: str,
+) -> tuple[list[dict[str, Any]], int]:
+    try:
+        data = json.loads(text)
+    except Exception:
+        return [], 1
+
+    objects: list[dict[str, Any]] = []
+    text_keys = {"text", "content", "comment", "commenttext", "comment_content", "commentcontent"}
+    like_keys = ("like_count", "digg_count", "likes", "like", "upvote_count", "vote_count")
+    reply_keys = ("reply_count", "reply_cnt", "reply_num", "replynum", "sub_comment_count", "children_count")
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            collected_text = ""
+            for key in text_keys:
+                value = node.get(key)
+                if isinstance(value, str):
+                    collected_text = value
+                    break
+            if collected_text:
+                like_count = 0
+                reply_count = 0
+                for key in like_keys:
+                    if key in node:
+                        like_count = _to_count(node.get(key))
+                        if like_count:
+                            break
+                for key in reply_keys:
+                    if key in node:
+                        reply_count = _to_count(node.get(key))
+                        if reply_count:
+                            break
+                objects.append(
+                    {
+                        "content": collected_text,
+                        "author_name": _extract_author_name_from_node(node),
+                        "like_count": like_count,
+                        "reply_count": reply_count,
+                    }
+                )
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(data)
+    return objects, 0
+
+
+def _extract_comment_candidates_via_regex(
+    html: str,
+    video_url: str,
+) -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
     warnings: list[str] = []
     comments: list[dict[str, Any]] = []
     seen_content_hashes: set[str] = set()
+    diagnostics: dict[str, Any] = {
+        "source_hits": {"regex_fragments": 0},
+        "parse_failures": 0,
+        "deduped_count": 0,
+    }
 
     try:
         fragment_pattern = re.compile(
@@ -400,6 +568,7 @@ def _extract_comment_candidates_via_regex(html: str, video_url: str) -> tuple[li
                 re.IGNORECASE,
             ):
                 continue
+            diagnostics["source_hits"]["regex_fragments"] += 1
             text = _normalize_extracted_text(match.group("body"))
             if not _looks_like_comment_text(text):
                 continue
@@ -408,14 +577,19 @@ def _extract_comment_candidates_via_regex(html: str, video_url: str) -> tuple[li
             if content_hash in seen_content_hashes:
                 continue
             seen_content_hashes.add(content_hash)
+            signals = _extract_lightweight_comment_signals(normalized)
+            item = _build_comment_item(
+                content=normalized,
+                video_url=video_url,
+                source="dom_regex",
+                content_hash=content_hash,
+                raw={"source": "dom_regex", "match": "comment-like fragment"},
+            )
+            item["author_name"] = signals.get("author_name", "") or ""
+            item["like_count"] = _to_count(signals.get("like_count"))
+            item["reply_count"] = _to_count(signals.get("reply_count"))
             comments.append(
-                _build_comment_item(
-                    content=normalized,
-                    video_url=video_url,
-                    source="dom_regex",
-                    content_hash=content_hash,
-                    raw={"source": "dom_regex", "match": "comment-like fragment"},
-                )
+                item
             )
             if len(comments) >= 20:
                 break
@@ -423,14 +597,24 @@ def _extract_comment_candidates_via_regex(html: str, video_url: str) -> tuple[li
             warnings.append("dom_regex_extraction_used")
     except Exception as exc:  # pragma: no cover - runtime dependent
         warnings.append(f"dom regex extraction failed: {exc!s}")
+        diagnostics["parse_failures"] += 1
 
-    return comments, warnings
+    diagnostics["deduped_count"] = len(comments)
+    return comments, warnings, diagnostics
 
 
-def _extract_comment_candidates_via_json(html: str, video_url: str) -> tuple[list[dict[str, Any]], list[str]]:
+def _extract_comment_candidates_via_json(
+    html: str,
+    video_url: str,
+) -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
     warnings: list[str] = []
     comments: list[dict[str, Any]] = []
     seen_content_hashes: set[str] = set()
+    diagnostics: dict[str, Any] = {
+        "source_hits": {"script_tags": 0, "jsonish_strings": 0, "json_objects": 0},
+        "parse_failures": 0,
+        "deduped_count": 0,
+    }
 
     try:
         script_pattern = re.compile(r"(?is)<script\b([^>]*)>(.*?)</script>")
@@ -450,10 +634,23 @@ def _extract_comment_candidates_via_json(html: str, video_url: str) -> tuple[lis
             )
             if not hint:
                 continue
+            diagnostics["source_hits"]["script_tags"] += 1
 
             extracted_texts = _extract_comment_like_strings_from_jsonish_text(script_text)
+            if extracted_texts:
+                diagnostics["source_hits"]["jsonish_strings"] += len(extracted_texts)
             if not extracted_texts and script_text[:1] in "{[":
                 extracted_texts = _extract_comment_like_strings_from_parsed_json(script_text)
+                if not extracted_texts:
+                    diagnostics["parse_failures"] += 1
+
+            extracted_objects: list[dict[str, Any]] = []
+            if script_text[:1] in "{[":
+                parsed_objects, parse_failures = _extract_comment_like_objects_from_parsed_json(script_text)
+                diagnostics["parse_failures"] += parse_failures
+                extracted_objects = parsed_objects
+                if extracted_objects:
+                    diagnostics["source_hits"]["json_objects"] += len(extracted_objects)
 
             for text in extracted_texts:
                 normalized = _normalize_comment_content(text)
@@ -474,14 +671,43 @@ def _extract_comment_candidates_via_json(html: str, video_url: str) -> tuple[lis
                 )
                 if len(comments) >= 20:
                     break
+
+            for obj in extracted_objects:
+                normalized = _normalize_comment_content(str(obj.get("content") or ""))
+                if not _looks_like_comment_text(normalized):
+                    continue
+                content_hash = _hash_content(normalized)
+                if content_hash in seen_content_hashes:
+                    continue
+                seen_content_hashes.add(content_hash)
+                item = _build_comment_item(
+                    content=normalized,
+                    video_url=video_url,
+                    source="dom_json",
+                    content_hash=content_hash,
+                    raw={"source": "dom_json", "script_hint": True, "object_extracted": True},
+                )
+                item["author_name"] = _normalize_comment_content(str(obj.get("author_name") or ""))
+                item["like_count"] = _to_count(obj.get("like_count"))
+                item["reply_count"] = _to_count(obj.get("reply_count"))
+                if not item["author_name"] or not item["like_count"] or not item["reply_count"]:
+                    fallback_signals = _extract_lightweight_comment_signals(normalized)
+                    item["author_name"] = item["author_name"] or fallback_signals.get("author_name", "") or ""
+                    item["like_count"] = item["like_count"] or _to_count(fallback_signals.get("like_count"))
+                    item["reply_count"] = item["reply_count"] or _to_count(fallback_signals.get("reply_count"))
+                comments.append(item)
+                if len(comments) >= 20:
+                    break
             if len(comments) >= 20:
                 break
         if comments:
             warnings.append("dom_json_extraction_used")
     except Exception as exc:  # pragma: no cover - runtime dependent
         warnings.append(f"dom json extraction failed: {exc!s}")
+        diagnostics["parse_failures"] += 1
 
-    return comments, warnings
+    diagnostics["deduped_count"] = len(comments)
+    return comments, warnings, diagnostics
 
 
 def _extract_comments_from_dom(page) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
@@ -502,6 +728,11 @@ def _extract_comments_from_dom(page) -> tuple[list[dict[str, Any]], list[dict[st
         "stop_reason": None,
         "stop_reason_detail": None,
         "warnings": [],
+        "extraction_diagnostics": {
+            "source_hits": {"regex_fragments": 0, "script_tags": 0, "jsonish_strings": 0, "json_objects": 0},
+            "parse_failures": 0,
+            "final_deduped_count": 0,
+        },
     }
 
     comments: list[dict[str, Any]] = []
@@ -513,15 +744,26 @@ def _extract_comments_from_dom(page) -> tuple[list[dict[str, Any]], list[dict[st
         html = page.content()
         page_url = str(getattr(page, "url", "") or "")
 
-        regex_comments, regex_warnings = _extract_comment_candidates_via_regex(html, page_url)
+        regex_comments, regex_warnings, regex_diag = _extract_comment_candidates_via_regex(html, page_url)
         meta["warnings"].append("dom_regex_extraction_used")
         meta["warnings"].extend(regex_warnings)
+        meta["extraction_diagnostics"]["source_hits"]["regex_fragments"] += int(
+            (regex_diag.get("source_hits") or {}).get("regex_fragments") or 0
+        )
+        meta["extraction_diagnostics"]["parse_failures"] += int(regex_diag.get("parse_failures") or 0)
         if regex_comments:
             comments.extend(regex_comments)
 
-        json_comments, json_warnings = _extract_comment_candidates_via_json(html, page_url)
+        json_comments, json_warnings, json_diag = _extract_comment_candidates_via_json(html, page_url)
         meta["warnings"].append("dom_json_extraction_used")
         meta["warnings"].extend(json_warnings)
+        json_hits = json_diag.get("source_hits") or {}
+        meta["extraction_diagnostics"]["source_hits"]["script_tags"] += int(json_hits.get("script_tags") or 0)
+        meta["extraction_diagnostics"]["source_hits"]["jsonish_strings"] += int(
+            json_hits.get("jsonish_strings") or 0
+        )
+        meta["extraction_diagnostics"]["source_hits"]["json_objects"] += int(json_hits.get("json_objects") or 0)
+        meta["extraction_diagnostics"]["parse_failures"] += int(json_diag.get("parse_failures") or 0)
         if json_comments:
             comments.extend(json_comments)
 
@@ -534,6 +776,7 @@ def _extract_comments_from_dom(page) -> tuple[list[dict[str, Any]], list[dict[st
             meta["stop_reason_detail"] = "; ".join(helper_failure_warnings[:3])
 
         comments = _dedupe_comment_items(comments)[:20]
+        meta["extraction_diagnostics"]["final_deduped_count"] = len(comments)
         meta["dom_items_seen"] = len(comments) + len(replies)
         return comments, replies, meta
     except Exception as exc:  # pragma: no cover - runtime dependent
