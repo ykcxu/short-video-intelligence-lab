@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .analysis import reporting as reporting_module
 from .analysis.reporting import (
     analyze_positive_factors,
     analyze_video_fit_from_file,
@@ -14,6 +15,8 @@ from .analysis.reporting import (
 from .browser.session_manager import INVALID_SESSION_CHARS
 from .config import load_config
 from .orchestrator import Orchestrator
+
+generate_weekly_report_from_full_batch = getattr(reporting_module, "generate_weekly_report_from_full_batch", None)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -267,6 +270,89 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     full_batch_parser.set_defaults(func=_cmd_crawl_targets_full_batch)
 
+    phase1_batch_parser = subparsers.add_parser(
+        "run-phase1-batch",
+        help="Run phase1 batch crawl with full enrichments and DB persistence.",
+    )
+    phase1_batch_parser.add_argument(
+        "--source-file",
+        type=Path,
+        default=None,
+        help="Target source file (csv/tsv/json). If omitted, defaults to DB mode.",
+    )
+    phase1_batch_parser.add_argument(
+        "--format",
+        choices=("auto", "csv", "tsv", "json"),
+        default="auto",
+        help="Input format for --source-file.",
+    )
+    phase1_batch_parser.add_argument(
+        "--from-db",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Whether to load targets from DB. Defaults to true when --source-file is omitted.",
+    )
+    phase1_batch_parser.add_argument(
+        "--status",
+        default="active",
+        help="DB mode: filter by target status.",
+    )
+    phase1_batch_parser.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="DB mode: optional limit.",
+    )
+    phase1_batch_parser.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Batch worker count (ThreadPool).",
+    )
+    phase1_batch_parser.add_argument(
+        "--max-items",
+        type=int,
+        default=50,
+        help="Reserved compatibility argument for phase1 runs.",
+    )
+    phase1_batch_parser.add_argument(
+        "--comment-pages",
+        type=int,
+        default=2,
+        help="Requested comment pagination depth.",
+    )
+    phase1_batch_parser.add_argument(
+        "--session-name",
+        dest="command_session_name",
+        default=None,
+        help="Command-level session override (higher priority than global --session-name).",
+    )
+    phase1_batch_parser.set_defaults(func=_cmd_run_phase1_batch)
+
+    weekly_report_parser = subparsers.add_parser(
+        "generate-weekly-report",
+        help="Generate weekly report from full-batch artifact.",
+    )
+    weekly_report_parser.add_argument(
+        "--artifact",
+        type=Path,
+        default=None,
+        help="Path to full-batch artifact JSON (default: latest under artifacts/collector/full-batch).",
+    )
+    weekly_report_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=None,
+        help="Optional path to write JSON report payload.",
+    )
+    weekly_report_parser.add_argument(
+        "--md-output",
+        type=Path,
+        default=None,
+        help="Optional path to write Markdown report.",
+    )
+    weekly_report_parser.set_defaults(func=_cmd_generate_weekly_report)
+
     analysis_parser = subparsers.add_parser(
         "analyze-positive-factors",
         help="Score positive factors from a full-batch artifact and export recommendations.",
@@ -396,6 +482,70 @@ def _cmd_crawl_targets_full_batch(orchestrator: Orchestrator, args: argparse.Nam
     )
 
 
+def _cmd_run_phase1_batch(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    from_db = args.from_db if args.from_db is not None else args.source_file is None
+    return orchestrator.crawl_targets_full_batch(
+        source_file=args.source_file,
+        input_format=args.format,
+        from_db=from_db,
+        status=args.status,
+        limit=args.limit,
+        max_workers=args.workers,
+        with_video_detail=True,
+        with_comments=True,
+        comment_pages=args.comment_pages,
+        persist_db=True,
+    )
+
+
+def _cmd_generate_weekly_report(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    if generate_weekly_report_from_full_batch is None:
+        return {
+            "ok": False,
+            "error": {
+                "type": "NotImplementedError",
+                "message": "generate_weekly_report_from_full_batch is not available in analysis.reporting",
+            },
+        }
+
+    result = generate_weekly_report_from_full_batch(
+        workspace=orchestrator.config.workspace,
+        artifacts_dir=orchestrator.config.artifacts_dir,
+        artifact=args.artifact,
+    )
+
+    if not isinstance(result, dict):
+        return {
+            "ok": False,
+            "error": {
+                "type": "TypeError",
+                "message": "generate_weekly_report_from_full_batch must return a dict",
+            },
+        }
+
+    if args.json_output is not None:
+        json_output_path = _resolve_cli_output_path(orchestrator, args.json_output)
+        with json_output_path.open("w", encoding="utf-8") as handle:
+            json.dump(result, handle, ensure_ascii=False, indent=2)
+        result["json_output_path"] = str(json_output_path)
+
+    if args.md_output is not None:
+        markdown_content = _extract_markdown_report(result)
+        if markdown_content is None:
+            return {
+                "ok": False,
+                "error": {
+                    "type": "ValueError",
+                    "message": "markdown output requested but report markdown text not found in result",
+                },
+            }
+        md_output_path = _resolve_cli_output_path(orchestrator, args.md_output)
+        md_output_path.write_text(markdown_content, encoding="utf-8")
+        result["md_output_path"] = str(md_output_path)
+
+    return result
+
+
 def _cmd_analyze_positive_factors(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
     return analyze_positive_factors(
         workspace=orchestrator.config.workspace,
@@ -449,6 +599,35 @@ def _merge_notice(existing: Any, appended: str) -> str:
     return f"{existing_text}\n{appended}"
 
 
+def _resolve_cli_output_path(orchestrator: Orchestrator, value: Path) -> Path:
+    resolved = Path(value).expanduser()
+    if not resolved.is_absolute():
+        resolved = orchestrator.config.workspace / resolved
+    resolved = resolved.resolve()
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    return resolved
+
+
+def _extract_markdown_report(result: dict[str, Any]) -> str | None:
+    markdown_candidates = (
+        result.get("markdown"),
+        result.get("md"),
+        result.get("report_markdown"),
+        result.get("markdown_report"),
+        result.get("weekly_markdown"),
+    )
+    for candidate in markdown_candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate
+    report_block = result.get("report")
+    if isinstance(report_block, dict):
+        for key in ("markdown", "md", "content"):
+            value = report_block.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -456,15 +635,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         orchestrator = Orchestrator(load_config(path=args.config, workspace=args.workspace))
 
-        if args.session_name_override is not None:
-            normalized_session_name = _normalize_session_name_cli(args.session_name_override)
+        command_session_name = getattr(args, "command_session_name", None)
+        session_name_override = command_session_name or args.session_name_override
+        if session_name_override is not None:
+            normalized_session_name = _normalize_session_name_cli(session_name_override)
             session_state_path = (
                 orchestrator.config.workspace / "data" / "sessions" / normalized_session_name / "state.json"
             )
             orchestrator.config.browser.storage_state = session_state_path
 
         result = args.func(orchestrator, args)
-        if args.session_name_override is not None:
+        if session_name_override is not None:
             notice = (
                 f"[session-override] enabled: browser.storage_state -> {orchestrator.config.browser.storage_state}"
             )
