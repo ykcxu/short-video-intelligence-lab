@@ -58,3 +58,31 @@
 - `global_summary` 适合看整批采集覆盖率、详情/评论成功率、失败率
 
 等这层汇总稳定后，再逐步下钻到单视频、单评论、单帧特征。
+
+---
+
+## 二期积极因素评分雏形（规则版）
+
+当前已经预留了一个**离线规则版**的账号积极因素评分入口，输入仍然是 `summary_block`，主要消费：
+
+- `account_summary.videos_seen`
+- `account_summary.detail_success`
+- `account_summary.comments_success`
+- `account_summary.warnings_count`
+- `global_summary` 中的整体成功率 / 失败率
+
+### 目前的规则思路
+
+这只是一个**雏形版本**，还不是机器学习模型，也不直接看视频内容：
+
+- `activity_score`：看账号在批量里可见的内容量和数据量
+- `execution_score`：看视频详情数据的可获得程度
+- `interaction_score`：看评论侧数据的可获得程度
+- `stability_score`：看 warning 数量，warning 越少分越高
+- `total_score`：四项加权得到的综合分
+
+### 当前阶段的定位
+
+- 这是**规则版**，用于先把“可解释的筛选逻辑”跑起来
+- 结果适合做账号排序、初筛和二期特征工程的参考
+- 后续可以再升级成“规则 + 特征 + 模型”的版本
