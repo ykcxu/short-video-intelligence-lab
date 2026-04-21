@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .analysis.reporting import analyze_positive_factors
+from .analysis.reporting import analyze_positive_factors, analyze_video_fit_from_file
 from .config import load_config
 from .orchestrator import Orchestrator
 
@@ -274,6 +274,24 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     analysis_parser.set_defaults(func=_cmd_analyze_positive_factors)
 
+    video_fit_parser = subparsers.add_parser(
+        "analyze-video-fit",
+        help="Analyze whether video detail payloads fit account growth strategy.",
+    )
+    video_fit_parser.add_argument(
+        "--input",
+        required=True,
+        type=Path,
+        help="Path to JSON file. Accepts one video detail object or a list of batch items.",
+    )
+    video_fit_parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional path to save fit analysis result JSON.",
+    )
+    video_fit_parser.set_defaults(func=_cmd_analyze_video_fit)
+
     return parser
 
 
@@ -354,6 +372,14 @@ def _cmd_analyze_positive_factors(orchestrator: Orchestrator, args: argparse.Nam
         workspace=orchestrator.config.workspace,
         artifacts_dir=orchestrator.config.artifacts_dir,
         artifact=args.artifact,
+        output=args.output,
+    )
+
+
+def _cmd_analyze_video_fit(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    return analyze_video_fit_from_file(
+        workspace=orchestrator.config.workspace,
+        input_path=args.input,
         output=args.output,
     )
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .positive_factors import build_recommendations, score_accounts_from_summary
+from .video_fit import analyze_video_fit, batch_analyze_video_fit
 
 FULL_BATCH_ARTIFACT_SUBDIR = Path("collector") / "full-batch"
 
@@ -154,19 +155,6 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
 
 
-def _error_result(exc: AnalysisError) -> dict[str, Any]:
-    return {
-        "ok": False,
-        "analysis_type": "positive_factors",
-        "error": {
-            "type": type(exc).__name__,
-            "message": str(exc),
-        },
-        "score": None,
-        "recommendations": [],
-    }
-
-
 def _mapping_get(value: Any, key: str) -> Any:
     if isinstance(value, Mapping):
         return value.get(key)
@@ -178,3 +166,58 @@ def _safe_int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def analyze_video_fit_from_file(
+    *,
+    workspace: Path,
+    input_path: Path,
+    output: Path | None = None,
+) -> dict[str, Any]:
+    """Analyze one or many video details from a JSON file."""
+
+    try:
+        resolved_input = _resolve_user_path(workspace=workspace, value=input_path)
+        if not resolved_input.exists() or not resolved_input.is_file():
+            raise AnalysisError(f"input file not found: {resolved_input}")
+
+        payload = _load_json(resolved_input)
+        if isinstance(payload, list):
+            batch_result = batch_analyze_video_fit([dict(item) if isinstance(item, Mapping) else {"video_detail": item} for item in payload])
+            result = {
+                "ok": True,
+                "analysis_type": "video_fit_batch",
+                "input_path": str(resolved_input),
+                "result": batch_result,
+            }
+        else:
+            single_result = analyze_video_fit(dict(payload) if isinstance(payload, Mapping) else {"video_detail": payload})
+            result = {
+                "ok": True,
+                "analysis_type": "video_fit_single",
+                "input_path": str(resolved_input),
+                "result": single_result,
+            }
+
+        if output is not None:
+            output_path = _resolve_output_path(workspace=workspace, output=output)
+            _write_json(output_path, result)
+            result["output_path"] = str(output_path)
+        return result
+    except AnalysisError as exc:
+        return _error_result(exc, analysis_type="video_fit")
+    except Exception as exc:  # pragma: no cover - defensive wrapper
+        return _error_result(AnalysisError(f"{type(exc).__name__}: {exc}"), analysis_type="video_fit")
+
+
+def _error_result(exc: AnalysisError, *, analysis_type: str = "positive_factors") -> dict[str, Any]:
+    return {
+        "ok": False,
+        "analysis_type": analysis_type,
+        "error": {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        },
+        "score": None,
+        "recommendations": [],
+    }

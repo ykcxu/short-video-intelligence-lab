@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from math import log10
 from typing import Any, Mapping
 
 
