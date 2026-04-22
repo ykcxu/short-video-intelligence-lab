@@ -9,6 +9,9 @@ from typing import Any
 from .analysis import reporting as reporting_module
 from .analysis.reporting import (
     analyze_positive_factors,
+    export_phase1_rerun_manifest,
+    generate_phase1_chunked_report,
+    get_phase1_status_overview,
     analyze_video_fit_from_file,
     analyze_video_fit_from_full_batch,
 )
@@ -414,6 +417,66 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     weekly_report_parser.set_defaults(func=_cmd_generate_weekly_report)
 
+    phase1_chunked_report_parser = subparsers.add_parser(
+        "generate-phase1-chunked-report",
+        help="Generate operations report from a phase1_chunked master artifact.",
+    )
+    phase1_chunked_report_parser.add_argument(
+        "--artifact",
+        type=Path,
+        default=None,
+        help="Path to phase1_chunked master artifact JSON (default: latest chunked master under artifacts/collector/full-batch).",
+    )
+    phase1_chunked_report_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=None,
+        help="Optional path to write JSON report payload.",
+    )
+    phase1_chunked_report_parser.add_argument(
+        "--md-output",
+        type=Path,
+        default=None,
+        help="Optional path to write Markdown report.",
+    )
+    phase1_chunked_report_parser.set_defaults(func=_cmd_generate_phase1_chunked_report)
+
+    export_rerun_parser = subparsers.add_parser(
+        "export-phase1-rerun-manifest",
+        help="Export failed targets from a phase1_chunked master artifact into a rerun manifest JSON.",
+    )
+    export_rerun_parser.add_argument(
+        "--artifact",
+        type=Path,
+        default=None,
+        help="Path to phase1_chunked master artifact JSON (default: latest chunked master under artifacts/collector/full-batch).",
+    )
+    export_rerun_parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional path to save the rerun manifest JSON.",
+    )
+    export_rerun_parser.set_defaults(func=_cmd_export_phase1_rerun_manifest)
+
+    phase1_status_parser = subparsers.add_parser(
+        "phase1-status-overview",
+        help="Show a compact overview of the latest full-batch and phase1_chunked artifacts.",
+    )
+    phase1_status_parser.add_argument(
+        "--md-output",
+        type=Path,
+        default=None,
+        help="Optional path to write Markdown overview.",
+    )
+    phase1_status_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=None,
+        help="Optional path to write JSON overview.",
+    )
+    phase1_status_parser.set_defaults(func=_cmd_phase1_status_overview)
+
     analysis_parser = subparsers.add_parser(
         "analyze-positive-factors",
         help="Score positive factors from a full-batch artifact and export recommendations.",
@@ -647,6 +710,71 @@ def _cmd_generate_weekly_report(orchestrator: Orchestrator, args: argparse.Names
         md_output_path.write_text(markdown_content, encoding="utf-8")
         result["md_output_path"] = str(md_output_path)
 
+    return result
+
+
+def _cmd_generate_phase1_chunked_report(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    result = generate_phase1_chunked_report(
+        workspace=orchestrator.config.workspace,
+        artifacts_dir=orchestrator.config.artifacts_dir,
+        artifact=args.artifact,
+    )
+
+    if args.json_output is not None:
+        json_output_path = _resolve_cli_output_path(orchestrator, args.json_output)
+        with json_output_path.open("w", encoding="utf-8") as handle:
+            json.dump(result, handle, ensure_ascii=False, indent=2)
+        result["json_output_path"] = str(json_output_path)
+
+    if args.md_output is not None:
+        markdown_content = _extract_markdown_report(result)
+        if markdown_content is None:
+            return {
+                "ok": False,
+                "error": {
+                    "type": "ValueError",
+                    "message": "markdown output requested but report markdown text not found in result",
+                },
+            }
+        md_output_path = _resolve_cli_output_path(orchestrator, args.md_output)
+        md_output_path.write_text(markdown_content, encoding="utf-8")
+        result["md_output_path"] = str(md_output_path)
+
+    return result
+
+
+def _cmd_export_phase1_rerun_manifest(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    return export_phase1_rerun_manifest(
+        workspace=orchestrator.config.workspace,
+        artifacts_dir=orchestrator.config.artifacts_dir,
+        artifact=args.artifact,
+        output=args.output,
+    )
+
+
+def _cmd_phase1_status_overview(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    result = get_phase1_status_overview(
+        workspace=orchestrator.config.workspace,
+        artifacts_dir=orchestrator.config.artifacts_dir,
+    )
+    if args.json_output is not None:
+        json_output_path = _resolve_cli_output_path(orchestrator, args.json_output)
+        with json_output_path.open("w", encoding="utf-8") as handle:
+            json.dump(result, handle, ensure_ascii=False, indent=2)
+        result["json_output_path"] = str(json_output_path)
+    if args.md_output is not None:
+        markdown_content = _extract_markdown_report(result)
+        if markdown_content is None:
+            return {
+                "ok": False,
+                "error": {
+                    "type": "ValueError",
+                    "message": "markdown output requested but overview markdown text not found in result",
+                },
+            }
+        md_output_path = _resolve_cli_output_path(orchestrator, args.md_output)
+        md_output_path.write_text(markdown_content, encoding="utf-8")
+        result["md_output_path"] = str(md_output_path)
     return result
 
 

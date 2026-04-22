@@ -414,8 +414,16 @@ class Orchestrator:
         total_success = 0
         total_failed = 0
         total_videos = 0
+        total_detail_attempted = 0
+        total_detail_success = 0
+        total_comment_attempted = 0
+        total_comment_success = 0
+        total_comment_items_seen = 0
+        total_comment_entries_seen = 0
+        total_comment_reply_entries_seen = 0
         total_detail_meaningful = 0
         total_comment_meaningful = 0
+        account_summary_rollup: list[dict[str, Any]] = []
 
         for chunk_index, chunk_targets in enumerate(chunks, start=1):
             batch_result = run_batch_full_collect(
@@ -454,6 +462,11 @@ class Orchestrator:
             global_summary = self._as_mapping(
                 self._as_mapping(chunk_payload.get("summary")).get("global_summary")
             )
+            account_summary = [
+                dict(item)
+                for item in list(self._as_mapping(chunk_payload.get("summary")).get("account_summary") or [])
+                if isinstance(item, dict)
+            ]
             failures_in_chunk = list(batch_result.get("failures") or [])
             failed_targets_in_chunk: list[dict[str, Any]] = []
             for failure_item in failures_in_chunk:
@@ -466,25 +479,66 @@ class Orchestrator:
             total_success += int(batch_result.get("success_count") or 0)
             total_failed += int(batch_result.get("failed_count") or 0)
             total_videos += int(global_summary.get("video_total") or 0)
+            total_detail_attempted += int(global_summary.get("detail_attempted") or 0)
+            total_detail_success += int(global_summary.get("detail_success_count") or 0)
+            total_comment_attempted += int(global_summary.get("comment_attempted") or 0)
+            total_comment_success += int(global_summary.get("comment_success_count") or 0)
+            total_comment_items_seen += int(global_summary.get("comment_items_seen") or 0)
+            total_comment_entries_seen += int(global_summary.get("comment_entries_seen") or 0)
+            total_comment_reply_entries_seen += int(global_summary.get("comment_reply_entries_seen") or 0)
             total_detail_meaningful += int(global_summary.get("detail_meaningful_count") or 0)
             total_comment_meaningful += int(global_summary.get("comment_meaningful_count") or 0)
             chunk_duration_sec = self._to_float(batch_result.get("duration_sec"))
+            detail_success_rate = self._to_ratio(
+                int(global_summary.get("detail_success_count") or 0),
+                int(global_summary.get("detail_attempted") or 0),
+            )
+            comment_success_rate = self._to_ratio(
+                int(global_summary.get("comment_success_count") or 0),
+                int(global_summary.get("comment_attempted") or 0),
+            )
+            detail_meaningful_rate = self._to_ratio(
+                int(global_summary.get("detail_meaningful_count") or 0),
+                int(global_summary.get("detail_attempted") or 0),
+            )
+            comment_meaningful_rate = self._to_ratio(
+                int(global_summary.get("comment_meaningful_count") or 0),
+                int(global_summary.get("comment_attempted") or 0),
+            )
 
             chunk_status = "failed" if failures_in_chunk else "success"
-            chunk_reports.append(
-                {
-                    "chunk_index": chunk_index,
-                    "status": chunk_status,
-                    "chunk_size": len(chunk_targets),
-                    "artifact_path": str(chunk_artifact_path),
-                    "duration_sec": chunk_duration_sec,
-                    "success_count": int(batch_result.get("success_count") or 0),
-                    "failed_count": int(batch_result.get("failed_count") or 0),
-                    "video_total": int(global_summary.get("video_total") or 0),
-                    "detail_meaningful_count": int(global_summary.get("detail_meaningful_count") or 0),
-                    "comment_meaningful_count": int(global_summary.get("comment_meaningful_count") or 0),
-                    "failed_targets": failed_targets_in_chunk,
-                }
+            chunk_report = {
+                "chunk_index": chunk_index,
+                "status": chunk_status,
+                "chunk_size": len(chunk_targets),
+                "artifact_path": str(chunk_artifact_path),
+                "duration_sec": chunk_duration_sec,
+                "success_count": int(batch_result.get("success_count") or 0),
+                "failed_count": int(batch_result.get("failed_count") or 0),
+                "video_total": int(global_summary.get("video_total") or 0),
+                "detail_attempted": int(global_summary.get("detail_attempted") or 0),
+                "detail_success_count": int(global_summary.get("detail_success_count") or 0),
+                "comment_attempted": int(global_summary.get("comment_attempted") or 0),
+                "comment_success_count": int(global_summary.get("comment_success_count") or 0),
+                "detail_meaningful_count": int(global_summary.get("detail_meaningful_count") or 0),
+                "comment_meaningful_count": int(global_summary.get("comment_meaningful_count") or 0),
+                "detail_success_rate": detail_success_rate,
+                "comment_success_rate": comment_success_rate,
+                "detail_meaningful_rate": detail_meaningful_rate,
+                "comment_meaningful_rate": comment_meaningful_rate,
+                "targets": [dict(target) for target in chunk_targets],
+                "target_names": self._collect_target_names(chunk_targets),
+                "account_summary": account_summary,
+                "failed_targets": failed_targets_in_chunk,
+            }
+            chunk_reports.append(chunk_report)
+            account_summary_rollup.extend(
+                self._attach_chunk_context_to_accounts(
+                    account_summary,
+                    chunk_index=chunk_index,
+                    chunk_status=chunk_status,
+                    chunk_artifact_path=chunk_artifact_path,
+                )
             )
 
             if pause_seconds > 0 and chunk_index < len(chunks):
@@ -518,6 +572,37 @@ class Orchestrator:
             key=lambda item: self._to_float(item.get("duration_sec")),
             reverse=True,
         )[:5]
+        rerun_priority_chunks = self._build_rerun_priority_chunks(chunk_reports)
+        total_duration_sec = round(sum(self._to_float(item.get("duration_sec")) for item in chunk_reports), 6)
+        summary_block = {
+            "account_summary": account_summary_rollup,
+            "global_summary": {
+                "target_count": len(targets),
+                "video_total": total_videos,
+                "detail_attempted": total_detail_attempted,
+                "detail_success_count": total_detail_success,
+                "detail_success_rate": self._to_ratio(total_detail_success, total_detail_attempted),
+                "comment_attempted": total_comment_attempted,
+                "comment_success_count": total_comment_success,
+                "comment_success_rate": self._to_ratio(total_comment_success, total_comment_attempted),
+                "comment_items_seen": total_comment_items_seen,
+                "comment_entries_seen": total_comment_entries_seen,
+                "comment_reply_entries_seen": total_comment_reply_entries_seen,
+                "detail_meaningful_count": total_detail_meaningful,
+                "comment_meaningful_count": total_comment_meaningful,
+                "failed_count": total_failed,
+                "with_video_detail": True,
+                "with_comments": True,
+                "comment_pages": comment_pages,
+                "max_items": max_items,
+                "video_limit_per_target": video_limit_per_target,
+                "comment_video_limit_per_target": comment_video_limit_per_target,
+                "chunk_count": len(chunks),
+                "chunk_success_count": sum(1 for item in chunk_reports if item.get("status") == "success"),
+                "chunk_failed_count": sum(1 for item in chunk_reports if item.get("status") == "failed"),
+                "total_duration_sec": total_duration_sec,
+            },
+        }
 
         result: dict[str, Any] = {
             "ok": True,
@@ -533,6 +618,7 @@ class Orchestrator:
             "video_limit_per_target": video_limit_per_target,
             "comment_video_limit_per_target": comment_video_limit_per_target,
             "chunks": chunk_reports,
+            "summary_block": summary_block,
             "summary": {
                 "success_count": total_success,
                 "failed_count": total_failed,
@@ -541,10 +627,11 @@ class Orchestrator:
                 "comment_meaningful_count": total_comment_meaningful,
                 "chunk_success_count": sum(1 for item in chunk_reports if item.get("status") == "success"),
                 "chunk_failed_count": sum(1 for item in chunk_reports if item.get("status") == "failed"),
-                "total_duration_sec": round(sum(self._to_float(item.get("duration_sec")) for item in chunk_reports), 6),
+                "total_duration_sec": total_duration_sec,
             },
             "failed_chunks": [item for item in chunk_reports if item.get("status") == "failed"],
             "slowest_chunks": slowest_chunks,
+            "rerun_priority_chunks": rerun_priority_chunks,
             "rerun_targets_count": len(rerun_targets),
         }
         if rerun_manifest_path is not None:
@@ -1100,6 +1187,115 @@ class Orchestrator:
             return float(value)
         except (TypeError, ValueError):
             return 0.0
+
+    def _to_ratio(self, numerator: Any, denominator: Any) -> float:
+        numerator_value = self._to_float(numerator)
+        denominator_value = self._to_float(denominator)
+        if denominator_value <= 0:
+            return 0.0
+        return round(numerator_value / denominator_value, 6)
+
+    def _collect_target_names(self, targets: list[dict[str, Any]]) -> list[str]:
+        names: list[str] = []
+        for target in targets:
+            if not isinstance(target, dict):
+                continue
+            label = str(target.get("source_name") or target.get("homepage_url") or "").strip()
+            if label and label not in names:
+                names.append(label)
+        return names
+
+    def _attach_chunk_context_to_accounts(
+        self,
+        accounts: list[dict[str, Any]],
+        *,
+        chunk_index: int,
+        chunk_status: str,
+        chunk_artifact_path: Path,
+    ) -> list[dict[str, Any]]:
+        enriched: list[dict[str, Any]] = []
+        for account in accounts:
+            if not isinstance(account, dict):
+                continue
+            enriched.append(
+                {
+                    **account,
+                    "chunk_index": chunk_index,
+                    "chunk_status": chunk_status,
+                    "chunk_artifact_path": str(chunk_artifact_path),
+                    "rerun_priority_hint": self._build_account_rerun_priority_hint(account, chunk_status),
+                }
+            )
+        return enriched
+
+    def _build_account_rerun_priority_hint(self, account: dict[str, Any], chunk_status: str) -> str:
+        if chunk_status == "failed":
+            return "high"
+        detail_meaningful = int(account.get("detail_meaningful") or 0)
+        comment_meaningful = int(account.get("comment_meaningful") or 0)
+        videos_seen = int(account.get("videos_seen") or 0)
+        if videos_seen <= 0:
+            return "high"
+        if detail_meaningful == 0 and comment_meaningful == 0:
+            return "high"
+        if comment_meaningful == 0:
+            return "medium"
+        return "low"
+
+    def _build_rerun_priority_chunks(self, chunk_reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        priority_items: list[dict[str, Any]] = []
+        for item in chunk_reports:
+            chunk = self._as_mapping(item)
+            failed_count = int(chunk.get("failed_count") or 0)
+            detail_meaningful_rate = self._to_float(chunk.get("detail_meaningful_rate"))
+            comment_meaningful_rate = self._to_float(chunk.get("comment_meaningful_rate"))
+            duration_sec = self._to_float(chunk.get("duration_sec"))
+            priority_score = round(
+                failed_count * 100
+                + max(0.0, 1.0 - detail_meaningful_rate) * 20
+                + max(0.0, 1.0 - comment_meaningful_rate) * 25
+                + min(duration_sec / 60.0, 20.0),
+                6,
+            )
+            priority_items.append(
+                {
+                    "chunk_index": int(chunk.get("chunk_index") or 0),
+                    "status": str(chunk.get("status") or ""),
+                    "priority_score": priority_score,
+                    "reason": self._build_chunk_priority_reason(
+                        failed_count=failed_count,
+                        detail_meaningful_rate=detail_meaningful_rate,
+                        comment_meaningful_rate=comment_meaningful_rate,
+                    ),
+                    "failed_count": failed_count,
+                    "target_names": list(chunk.get("target_names") or []),
+                    "artifact_path": chunk.get("artifact_path"),
+                }
+            )
+        priority_items.sort(
+            key=lambda row: (
+                -self._to_float(row.get("priority_score")),
+                int(row.get("chunk_index") or 0),
+            )
+        )
+        return priority_items[:10]
+
+    def _build_chunk_priority_reason(
+        self,
+        *,
+        failed_count: int,
+        detail_meaningful_rate: float,
+        comment_meaningful_rate: float,
+    ) -> str:
+        if failed_count > 0:
+            return "存在失败目标，建议优先补跑"
+        if detail_meaningful_rate <= 0 and comment_meaningful_rate <= 0:
+            return "详情与评论都未形成有效样本"
+        if comment_meaningful_rate <= 0:
+            return "评论有效率偏低，建议先补评论链路"
+        if detail_meaningful_rate < 0.5:
+            return "详情有效率偏低，建议复查详情页提取"
+        return "当前块较稳定，可低优先级补跑"
 
     def _build_phase1_rerun_command_example(
         self,

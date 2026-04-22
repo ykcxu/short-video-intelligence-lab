@@ -25,19 +25,30 @@
 - 配置里的相对路径都会按 workspace 目录统一解析
 - 当前 CLI 入口仍是 `short-video-intel`
 
-### 当前可用 CLI（骨架）
+### 当前可用 CLI（当前实现）
 
 - `short-video-intel bootstrap`
 - `short-video-intel init-db`
 - `short-video-intel import-targets --input targets.csv`
 - `short-video-intel session-init --session-name main`
+- `short-video-intel session-capture --session-name douyin-main`
+- `short-video-intel open-debug-homepage --session-name douyin-main --homepage-url <url>`
 - `short-video-intel crawl-homepage --homepage-url <url>`
+- `short-video-intel crawl-homepage-cdp --homepage-url <url> --cdp-url http://127.0.0.1:9222`
 - `short-video-intel crawl-video-detail --video-url <url>`
 - `short-video-intel crawl-video-comments --video-url <url>`
 - `short-video-intel build-download-jobs --videos-file videos.json --run`
 - `short-video-intel crawl-targets-batch --source-file inputs/douyin_homepages_seed.tsv --workers 2`
 - `short-video-intel crawl-targets-batch --from-db --limit 20 --persist-db`
 - `short-video-intel crawl-targets-full-batch --source-file inputs/douyin_homepages_seed.tsv --with-video-detail --with-comments --comment-pages 3 --workers 2`
+- `short-video-intel run-phase1-batch --from-db --limit 20 --session-name douyin-main`
+- `short-video-intel generate-weekly-report --artifact <full-batch.json> --json-output <path> --md-output <path>`
+- `short-video-intel generate-phase1-chunked-report --artifact <phase1_chunked_master.json> --json-output <path> --md-output <path>`
+- `short-video-intel export-phase1-rerun-manifest --artifact <phase1_chunked_master.json> --output <path>`
+- `short-video-intel phase1-status-overview --json-output <path> --md-output <path>`
+- `short-video-intel analyze-positive-factors --artifact <full-batch.json> --output <path>`
+- `short-video-intel analyze-video-fit --input <detail-or-batch.json> --output <path>`
+- `short-video-intel analyze-video-fit-full-batch --artifact <full-batch.json> --output <path>`
 
 `import-targets` 现支持 `csv/json/tsv`，并支持中文表头映射（如“主页链接/账号名/分类/部门”）。
 
@@ -65,23 +76,105 @@ short-video-intel run-phase1-batch `
   --session-name douyin-main `
   --from-db `
   --limit 20 `
-  --with-video-detail `
-  --with-comments `
-  --comment-pages 3 `
-  --persist-db `
-  --output .\artifacts\phase1\phase1-batch-20.json
+  --workers 1 `
+  --comment-pages 1 `
+  --video-limit-per-target 8 `
+  --comment-video-limit-per-target 4 `
+  --browser-timeout-ms 120000
 ```
 
-### 3) 周报生成示例（同时输出 JSON + Markdown）
+### 3) 慢网推荐：分块批跑
+
+```powershell
+short-video-intel run-phase1-batch `
+  --session-name douyin-main `
+  --from-db `
+  --limit 20 `
+  --workers 1 `
+  --comment-pages 1 `
+  --video-limit-per-target 8 `
+  --comment-video-limit-per-target 4 `
+  --browser-timeout-ms 120000 `
+  --chunk-size 2 `
+  --pause-seconds 3
+```
+
+这会产出：
+
+- 每个 chunk 一个 artifact
+- 一个 `phase1_chunked_master` 总汇总
+- 如果有失败 target，还会有 rerun manifest
+
+### 4) 周报生成示例（同时输出 JSON + Markdown）
 
 ```powershell
 short-video-intel generate-weekly-report `
-  --input .\artifacts\phase1\phase1-batch-20.json `
-  --output-json .\artifacts\reports\weekly-2026w17.json `
-  --output-md .\artifacts\reports\weekly-2026w17.md
+  --artifact .\artifacts\collector\full-batch\batch_full_collect_xxx.json `
+  --json-output .\artifacts\reports\weekly-2026w17.json `
+  --md-output .\artifacts\reports\weekly-2026w17.md
 ```
 
-### 4) 一期 / 二期边界
+### 5) chunked 运行报告与补跑清单
+
+```powershell
+short-video-intel generate-phase1-chunked-report `
+  --artifact .\artifacts\collector\full-batch\phase1_chunked_master_xxx.json `
+  --json-output .\artifacts\reports\phase1-chunked-report.json `
+  --md-output .\artifacts\reports\phase1-chunked-report.md
+
+short-video-intel export-phase1-rerun-manifest `
+  --artifact .\artifacts\collector\full-batch\phase1_chunked_master_xxx.json `
+  --output .\artifacts\collector\full-batch-chunks\phase1-rerun.json
+```
+
+### 5.1) 从批跑到补跑的闭环示例
+
+```powershell
+# 1. 分块批跑
+short-video-intel run-phase1-batch `
+  --session-name douyin-main `
+  --from-db `
+  --limit 20 `
+  --workers 1 `
+  --comment-pages 1 `
+  --video-limit-per-target 8 `
+  --comment-video-limit-per-target 4 `
+  --browser-timeout-ms 120000 `
+  --chunk-size 2 `
+  --pause-seconds 3
+
+# 2. 为最新 chunked master 生成运维报告
+short-video-intel generate-phase1-chunked-report `
+  --json-output .\artifacts\analysis\phase1_chunked_report.json `
+  --md-output .\artifacts\analysis\phase1_chunked_report.md
+
+# 2.1 先快速看最新状态
+short-video-intel phase1-status-overview `
+  --json-output .\artifacts\analysis\phase1_status_overview.json `
+  --md-output .\artifacts\analysis\phase1_status_overview.md
+
+# 3. 导出失败 target，作为下一轮补跑清单
+short-video-intel export-phase1-rerun-manifest `
+  --output .\artifacts\collector\full-batch-chunks\phase1_rerun_manifest.json
+
+# 4. 用补跑清单单独重跑
+short-video-intel run-phase1-batch `
+  --source-file .\artifacts\collector\full-batch-chunks\phase1_rerun_manifest.json `
+  --no-from-db `
+  --workers 1 `
+  --comment-pages 1 `
+  --video-limit-per-target 8 `
+  --comment-video-limit-per-target 4 `
+  --browser-timeout-ms 120000
+```
+
+如果你想先看一个已经生成好的离线样例，当前仓库里已有：
+
+- `C:\Users\Administrator\Desktop\codex\short-video-intelligence-lab\artifacts\analysis\phase1_chunked_report_sample_20260422.json`
+- `C:\Users\Administrator\Desktop\codex\short-video-intelligence-lab\artifacts\analysis\phase1_chunked_report_sample_20260422.md`
+- `C:\Users\Administrator\Desktop\codex\short-video-intelligence-lab\artifacts\collector\full-batch-chunks\phase1_rerun_export_sample_20260422.json`
+
+### 6) 一期 / 二期边界
 
 - 一期优先：抓取链路、落库、批跑稳定性。
 - 二期辅助：积极因素评分与视频适配分析，建立在一期产物之上。
@@ -159,14 +252,13 @@ short-video-intel crawl-targets-full-batch `
 - `account_summary[].comments_success`：评论侧可成功提取的数量
 - `account_summary[].warnings_count`：该主页在批次里的 warning 数
 
-### 4. 二期评分命令（预期）
+### 4. 二期评分命令
 
-二期雏形会增加一个**只消费 `summary_block`** 的积极因素评分命令。  
-下面是预期命令形态，主线实现后即可直接使用：
+二期雏形现在已经支持**直接消费 full-batch artifact** 的积极因素评分：
 
 ```powershell
 short-video-intel analyze-positive-factors `
-  --summary-file .\artifacts\full-batch.json `
+  --artifact .\artifacts\collector\full-batch\batch_full_collect_xxx.json `
   --output .\artifacts\positive-factors.json
 ```
 
@@ -257,16 +349,19 @@ short-video-intel analyze-positive-factors `
 - 语音：`ffmpeg`、`faster-whisper`
 - 存储：`SQLite` / `Postgres`、`JSONL`、`Parquet` / `DuckDB`
 
-## 下一步
+## 当前运行建议
 
-建议先按下面顺序推进：
+建议当前按下面顺序推进：
 
-1. 明确采集目标平台与授权边界
-2. 先做单账号 / 单主页采集 MVP
-3. 打通视频下载 + 评论快照落库
-4. 加入视觉特征抽取
-5. 加入话术分析并做批处理
-6. 最后做队列化、多进程、多 GPU 优化
+1. 先用 `session-capture` 固化登录态
+2. 用 `open-debug-homepage + crawl-homepage-cdp` 做主页活窗口验证
+3. 用 `run-phase1-batch` 小范围跑通
+4. 网络差时切 `--chunk-size`
+5. 跑完后优先看：
+   - `generate-phase1-chunked-report`
+   - `export-phase1-rerun-manifest`
+   - `generate-weekly-report`
+6. 再进入二期评分与视频适配
 
 ## 说明
 
