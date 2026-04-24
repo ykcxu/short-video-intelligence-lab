@@ -115,6 +115,21 @@ def _build_steps(workspace: Path, top_n: int, log_limit: int, skip_sqlite: bool)
             ],
         },
         {
+            "name": "build_strict_pool_backfill_targets",
+            "command": [
+                python_cmd,
+                str(tool_dir / "build_strict_pool_backfill_targets.py"),
+                "--workspace",
+                str(workspace),
+                "--output",
+                "artifacts/analysis/strict_pool_backfill_targets.json",
+                "--min-priority",
+                "中",
+                "--min-valid-videos",
+                "50",
+            ],
+        },
+        {
             "name": "build_run_summary",
             "command": [
                 python_cmd,

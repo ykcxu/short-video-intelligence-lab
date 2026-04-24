@@ -13,6 +13,7 @@ STATUS_FILES = {
     "positive_factors_report": "artifacts/analysis/positive_factors_report.json",
     "positive_factors_strict_valid_report": "artifacts/analysis/positive_factors_strict_valid_report.json",
     "strict_pool_gap_report": "artifacts/status/strict_pool_gap_report.json",
+    "strict_pool_backfill_targets": "artifacts/analysis/strict_pool_backfill_targets.json",
 }
 
 
@@ -85,6 +86,8 @@ def _build_report_highlights(report_name: str, payload: dict[str, Any]) -> dict[
         return _positive_factors_highlights(payload)
     if report_name == "strict_pool_gap_report":
         return _strict_pool_gap_highlights(payload)
+    if report_name == "strict_pool_backfill_targets":
+        return _target_list_highlights(payload)
     return {}
 
 
@@ -135,6 +138,13 @@ def _strict_pool_gap_highlights(payload: dict[str, Any]) -> dict[str, Any]:
         "overall_retention_rate": payload.get("overall_retention_rate"),
         "high_priority_account_count": len(high_priority),
     }
+
+
+def _target_list_highlights(payload: dict[str, Any]) -> dict[str, Any]:
+    # 提取补采目标列表的规模和优先级分布。
+    targets = payload.get("_items") if isinstance(payload.get("_items"), list) else []
+    high_priority = [item for item in targets if isinstance(item, dict) and item.get("backfill_priority") == "高"]
+    return {"target_count": len(targets), "high_priority_target_count": len(high_priority)}
 
 
 def _scan_recent_logs(workspace: Path, log_limit: int, warnings: list[str]) -> dict[str, Any]:
@@ -271,6 +281,8 @@ def _read_optional_json(path: Path) -> dict[str, Any] | None:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
+    if isinstance(payload, list):
+        return {"_items": payload}
     return payload if isinstance(payload, dict) else None
 
 
