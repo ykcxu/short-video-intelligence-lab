@@ -130,6 +130,23 @@ def _build_steps(workspace: Path, top_n: int, log_limit: int, skip_sqlite: bool)
             ],
         },
         {
+            "name": "build_backfill_download_status",
+            "command": [
+                python_cmd,
+                str(tool_dir / "build_backfill_download_status.py"),
+                "--workspace",
+                str(workspace),
+                "--targets",
+                "artifacts/analysis/strict_pool_backfill_targets.json",
+                "--processed-videos",
+                "data/processed/videos.csv",
+                "--output",
+                "artifacts/status/backfill_download_status.json",
+                "--md-output",
+                "artifacts/status/backfill_download_status.md",
+            ],
+        },
+        {
             "name": "build_run_summary",
             "command": [
                 python_cmd,

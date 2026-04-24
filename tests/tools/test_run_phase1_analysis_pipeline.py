@@ -82,11 +82,11 @@ class RunPhase1AnalysisPipelineToolTestCase(unittest.TestCase):
             self.assertEqual([row["tool"] for row in order], self._expected_names())
 
             fourth_args = order[3]["args"]
-            seventh_args = order[6]["args"]
+            eighth_args = order[7]["args"]
             self.assertIn("--top-n", fourth_args)
             self.assertEqual(fourth_args[fourth_args.index("--top-n") + 1], "12")
-            self.assertIn("--log-limit", seventh_args)
-            self.assertEqual(seventh_args[seventh_args.index("--log-limit") + 1], "30")
+            self.assertIn("--log-limit", eighth_args)
+            self.assertEqual(eighth_args[eighth_args.index("--log-limit") + 1], "30")
 
     def test_main_stops_when_step_fails(self) -> None:
         module = _load_tool_module()
@@ -139,6 +139,7 @@ class RunPhase1AnalysisPipelineToolTestCase(unittest.TestCase):
             "build_positive_factors_report",
             "build_strict_pool_gap_report",
             "build_strict_pool_backfill_targets",
+            "build_backfill_download_status",
             "build_run_summary",
         ]
 
