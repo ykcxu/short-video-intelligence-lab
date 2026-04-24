@@ -11,6 +11,19 @@ from short_video_intel.analysis.valid_pool_sources import is_homepage_observed
 
 
 VIDEO_ID_MIN_LENGTH = 10
+COMMENT_NOISE_MARKERS = (
+    "抖音电商直播间带货榜",
+    "直播间带货榜当前分为",
+    "商品类目榜",
+    "抖音旗舰榜",
+    "特色主题榜",
+    "国家补贴榜",
+    "带货力、互动力、吸引力",
+    "为保证榜单时效性",
+    "交易量等数据指标综合评估直播间主播的带货能力",
+    "互动异常",
+    "不同的用户看到的标签不尽相同",
+)
 
 
 def build_valid_analysis_pool(
@@ -38,7 +51,7 @@ def build_valid_analysis_pool(
         require_detail_account_mention=require_detail_account_mention,
     )
     valid_metrics = _filter_rows_by_video_id(metrics_rows, valid_video_ids)
-    valid_comments = _filter_rows_by_video_id(comments_rows, valid_video_ids)
+    valid_comments = _filter_valid_comments(comments_rows, valid_video_ids)
     output_dir.mkdir(parents=True, exist_ok=True)
     _write_csv_rows(output_dir / "valid_videos.csv", videos_headers, valid_videos)
     _write_csv_rows(output_dir / "valid_video_metrics.csv", metrics_headers, valid_metrics)
@@ -95,6 +108,24 @@ def _has_required_assets(row: dict[str, str]) -> bool:
 def _filter_rows_by_video_id(rows: list[dict[str, str]], valid_video_ids: set[str]) -> list[dict[str, str]]:
     """按视频 ID 子集过滤任意明细表。"""
     return [row for row in rows if _to_text(row.get("video_id")) in valid_video_ids]
+
+
+def _filter_valid_comments(rows: list[dict[str, str]], valid_video_ids: set[str]) -> list[dict[str, str]]:
+    """按视频 ID 与文本噪声规则过滤评论。"""
+    filtered = []
+    for row in rows:
+        if _to_text(row.get("video_id")) not in valid_video_ids:
+            continue
+        if _is_comment_noise(row):
+            continue
+        filtered.append(row)
+    return filtered
+
+
+def _is_comment_noise(row: dict[str, str]) -> bool:
+    """识别从页面说明区误抽成评论的电商榜单噪声。"""
+    text = _to_text(row.get("text"))
+    return any(marker in text for marker in COMMENT_NOISE_MARKERS)
 
 
 def _collect_filtered_video_ids(report: dict[str, Any], keep_suspicious: bool) -> set[str]:

@@ -69,6 +69,7 @@ class BuildValidAnalysisPoolToolTestCase(unittest.TestCase):
             self.assertEqual([row["video_id"] for row in videos], ["1111111111"])
             self.assertEqual([row["video_id"] for row in metrics], ["1111111111"])
             self.assertEqual([row["video_id"] for row in comments], ["1111111111"])
+            self.assertEqual([row["text"] for row in comments], ["ok"])
             self.assertEqual(_read_video_ids(output_dir / "videos.csv"), ["1111111111"])
             self.assertEqual(_read_video_ids(output_dir / "video_metrics.csv"), ["1111111111"])
             self.assertEqual(_read_video_ids(output_dir / "comments.csv"), ["1111111111"])
@@ -235,6 +236,8 @@ class BuildValidAnalysisPoolToolTestCase(unittest.TestCase):
             comment_headers,
             [
                 {"comment_id": "c1", "video_id": "1111111111", "text": "ok"},
+                {"comment_id": "c-noise", "video_id": "1111111111", "text": "抖音电商直播间带货榜是根据真实数据进行排名的直播间排行榜"},
+                {"comment_id": "c-noise2", "video_id": "1111111111", "text": "为保证榜单时效性，交易量等数据指标综合评估直播间主播的带货能力"},
                 {"comment_id": "c2", "video_id": "3333333333", "text": "sus"},
                 {"comment_id": "c3", "video_id": "2222222222", "text": "missing"},
                 {"comment_id": "c4", "video_id": "5555555555", "text": "invalid"},
