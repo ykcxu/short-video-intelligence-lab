@@ -42,7 +42,7 @@ def build_valid_analysis_pool(
     quality_report = _load_json(quality_report_path)
     homepage_index = build_homepage_observed_index(workspace) if require_homepage_observed else {}
     filtered_ids = _collect_filtered_video_ids(quality_report, keep_suspicious)
-    valid_video_ids, valid_videos = _filter_videos(
+    valid_video_ids, valid_videos, reason_counts = _filter_videos(
         rows=videos_rows,
         filtered_ids=filtered_ids,
         homepage_index=homepage_index,
@@ -72,6 +72,9 @@ def build_valid_analysis_pool(
         "valid_video_count": len(valid_videos),
         "valid_video_metric_count": len(valid_metrics),
         "valid_comment_count": len(valid_comments),
+        "filtered_reason_counts": reason_counts,
+        "input_account_video_counts": _count_rows_by_account(videos_rows),
+        "valid_account_video_counts": _count_rows_by_account(valid_videos),
     }
 
 
@@ -82,22 +85,56 @@ def _filter_videos(
     workspace: Path,
     input_dir: Path,
     require_detail_account_mention: bool,
-) -> tuple[set[str], list[dict[str, str]]]:
+) -> tuple[set[str], list[dict[str, str]], dict[str, int]]:
     """筛出具备下载+详情且通过所有条件校验的视频。"""
     valid_rows: list[dict[str, str]] = []
     valid_ids: set[str] = set()
     detail_cache: dict[Path, str] = {}
+    reason_counts = _new_reason_counts()
     for row in rows:
         video_id = _to_text(row.get("video_id"))
-        if not _is_valid_video_id(video_id) or video_id in filtered_ids:
-            continue
-        if not _has_required_assets(row) or not is_homepage_observed(row, homepage_index):
-            continue
-        if not is_detail_account_mentioned(row, workspace, input_dir, require_detail_account_mention, detail_cache):
+        reason = _get_video_filter_reason(row, video_id, filtered_ids, homepage_index, workspace, input_dir, require_detail_account_mention, detail_cache)
+        if reason:
+            reason_counts[reason] += 1
             continue
         valid_rows.append(row)
         valid_ids.add(video_id)
-    return valid_ids, valid_rows
+    return valid_ids, valid_rows, reason_counts
+
+
+def _get_video_filter_reason(
+    row: dict[str, str],
+    video_id: str,
+    filtered_ids: set[str],
+    homepage_index: dict[str, set[str]],
+    workspace: Path,
+    input_dir: Path,
+    require_detail_account_mention: bool,
+    detail_cache: dict[Path, str],
+) -> str:
+    """返回视频被过滤的原因；空字符串表示保留。"""
+    if not _is_valid_video_id(video_id):
+        return "invalid_video_id"
+    if video_id in filtered_ids:
+        return "quality_report_filtered"
+    if not _has_required_assets(row):
+        return "missing_required_assets"
+    if not is_homepage_observed(row, homepage_index):
+        return "not_homepage_observed"
+    if not is_detail_account_mentioned(row, workspace, input_dir, require_detail_account_mention, detail_cache):
+        return "detail_account_not_mentioned"
+    return ""
+
+
+def _new_reason_counts() -> dict[str, int]:
+    """构造稳定的过滤原因计数字典，方便下游直接读取。"""
+    return {
+        "invalid_video_id": 0,
+        "quality_report_filtered": 0,
+        "missing_required_assets": 0,
+        "not_homepage_observed": 0,
+        "detail_account_not_mentioned": 0,
+    }
 
 
 def _has_required_assets(row: dict[str, str]) -> bool:
@@ -126,6 +163,15 @@ def _is_comment_noise(row: dict[str, str]) -> bool:
     """识别从页面说明区误抽成评论的电商榜单噪声。"""
     text = _to_text(row.get("text"))
     return any(marker in text for marker in COMMENT_NOISE_MARKERS)
+
+
+def _count_rows_by_account(rows: list[dict[str, str]]) -> dict[str, int]:
+    """按账号统计视频行数，便于解释严格过滤后的覆盖变化。"""
+    counts: dict[str, int] = {}
+    for row in rows:
+        account = _to_text(row.get("account_id")) or "unknown"
+        counts[account] = counts.get(account, 0) + 1
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
 
 
 def _collect_filtered_video_ids(report: dict[str, Any], keep_suspicious: bool) -> set[str]:

@@ -61,6 +61,8 @@ class BuildValidAnalysisPoolToolTestCase(unittest.TestCase):
             self.assertEqual(summary["valid_video_count"], 1)
             self.assertEqual(summary["valid_video_metric_count"], 1)
             self.assertEqual(summary["valid_comment_count"], 1)
+            self.assertEqual(summary["filtered_reason_counts"]["quality_report_filtered"], 3)
+            self.assertEqual(summary["filtered_reason_counts"]["missing_required_assets"], 1)
 
             videos = _read_csv(output_dir / "valid_videos.csv")
             metrics = _read_csv(output_dir / "valid_video_metrics.csv")
@@ -103,6 +105,7 @@ class BuildValidAnalysisPoolToolTestCase(unittest.TestCase):
             summary = json.loads(stdout.getvalue())
             self.assertTrue(summary["keep_suspicious"])
             self.assertEqual(summary["valid_video_count"], 2)
+            self.assertEqual(sum(summary["valid_account_video_counts"].values()), 2)
 
             videos = _read_csv(output_dir / "valid_videos.csv")
             metrics = _read_csv(output_dir / "valid_video_metrics.csv")
@@ -138,6 +141,7 @@ class BuildValidAnalysisPoolToolTestCase(unittest.TestCase):
             summary = json.loads(stdout.getvalue())
             self.assertTrue(summary["require_homepage_observed"])
             self.assertEqual(summary["homepage_observed_video_count"], 1)
+            self.assertEqual(summary["filtered_reason_counts"]["not_homepage_observed"], 0)
             self.assertEqual(_read_video_ids(output_dir / "videos.csv"), ["1111111111"])
 
     def test_main_requires_detail_account_mention_when_enabled(self) -> None:
