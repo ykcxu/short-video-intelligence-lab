@@ -80,6 +80,7 @@ class BuildRunSummaryTestCase(unittest.TestCase):
             self.assertIn("状态文件缺失：artifacts/analysis/positive_factors_strict_valid_report.json", payload["warnings"])
             self.assertIn("状态文件缺失：artifacts/status/strict_pool_gap_report.json", payload["warnings"])
             self.assertIn("状态文件缺失：artifacts/analysis/strict_pool_backfill_targets.json", payload["warnings"])
+            self.assertIn("状态文件缺失：artifacts/status/backfill_download_status.json", payload["warnings"])
             self.assertEqual(payload["run_logs"]["included_file_count"], 2)
             self.assertTrue(payload["run_logs"]["has_non_empty_error_log"])
             self.assertEqual(payload["run_logs"]["non_empty_error_log_count"], 1)
@@ -106,6 +107,10 @@ class BuildRunSummaryTestCase(unittest.TestCase):
             _write_json(
                 workspace / "artifacts" / "analysis" / "strict_pool_backfill_targets.json",
                 [{"source_name": "账号A", "backfill_priority": "高"}, {"source_name": "账号B", "backfill_priority": "中"}],
+            )
+            _write_json(
+                workspace / "artifacts" / "status" / "backfill_download_status.json",
+                {"target_count": 2, "needs_dataset_refresh_count": 1, "accounts": [{"local_mp4_count": 3}, {"local_mp4_count": 4}]},
             )
 
             custom_json = workspace / "tmp" / "run_summary.json"
@@ -139,6 +144,8 @@ class BuildRunSummaryTestCase(unittest.TestCase):
             self.assertEqual(gap["high_priority_account_count"], 1)
             targets = payload["status_reports"]["strict_pool_backfill_targets"]["highlights"]
             self.assertEqual(targets["target_count"], 2)
+            download = payload["status_reports"]["backfill_download_status"]["highlights"]
+            self.assertEqual(download["local_mp4_total"], 7)
 
 
 if __name__ == "__main__":

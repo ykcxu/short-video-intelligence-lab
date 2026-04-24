@@ -14,6 +14,7 @@ STATUS_FILES = {
     "positive_factors_strict_valid_report": "artifacts/analysis/positive_factors_strict_valid_report.json",
     "strict_pool_gap_report": "artifacts/status/strict_pool_gap_report.json",
     "strict_pool_backfill_targets": "artifacts/analysis/strict_pool_backfill_targets.json",
+    "backfill_download_status": "artifacts/status/backfill_download_status.json",
 }
 
 
@@ -88,6 +89,8 @@ def _build_report_highlights(report_name: str, payload: dict[str, Any]) -> dict[
         return _strict_pool_gap_highlights(payload)
     if report_name == "strict_pool_backfill_targets":
         return _target_list_highlights(payload)
+    if report_name == "backfill_download_status":
+        return _backfill_download_highlights(payload)
     return {}
 
 
@@ -145,6 +148,17 @@ def _target_list_highlights(payload: dict[str, Any]) -> dict[str, Any]:
     targets = payload.get("_items") if isinstance(payload.get("_items"), list) else []
     high_priority = [item for item in targets if isinstance(item, dict) and item.get("backfill_priority") == "高"]
     return {"target_count": len(targets), "high_priority_target_count": len(high_priority)}
+
+
+def _backfill_download_highlights(payload: dict[str, Any]) -> dict[str, Any]:
+    # 提取补采下载状态关键指标。
+    accounts = payload.get("accounts") if isinstance(payload.get("accounts"), list) else []
+    local_mp4_total = sum(int(item.get("local_mp4_count") or 0) for item in accounts if isinstance(item, dict))
+    return {
+        "target_count": payload.get("target_count"),
+        "needs_dataset_refresh_count": payload.get("needs_dataset_refresh_count"),
+        "local_mp4_total": local_mp4_total,
+    }
 
 
 def _scan_recent_logs(workspace: Path, log_limit: int, warnings: list[str]) -> dict[str, Any]:
