@@ -15,7 +15,7 @@ from .collector.target_source import load_targets_from_db, load_targets_from_fil
 from .collector.targets_loader import load_targets_from_path
 from .collector.video_collector import collect_video_detail
 from .config import AppConfig
-from .downloader import build_download_jobs, run_download_jobs
+from .downloader import build_download_jobs, extract_videos_from_artifact, run_download_jobs, run_download_jobs_from_file, summarize_download_results
 from .pipelines import run_batch_full_collect, run_batch_homepage_crawl
 
 
@@ -652,6 +652,7 @@ class Orchestrator:
         videos_file: str | Path,
         output_dir: str | Path | None = None,
         run: bool = False,
+        max_workers: int = 1,
     ) -> dict[str, Any]:
         self.bootstrap()
         videos_path = Path(videos_file)
@@ -666,6 +667,11 @@ class Orchestrator:
 
         resolved_output_dir = Path(output_dir) if output_dir else (self.config.downloads_dir / "stub")
         jobs = build_download_jobs(payload, resolved_output_dir)
+        cookies_source = getattr(self.config.browser, "storage_state", None)
+        if cookies_source:
+            for job in jobs:
+                if isinstance(job, dict):
+                    job["cookies_source"] = str(cookies_source)
         artifact_path = self._write_artifact(
             category="downloader/jobs",
             stem=f"download_jobs_{videos_path.stem}",
@@ -678,16 +684,110 @@ class Orchestrator:
             "preview": jobs[:3],
         }
         if run:
-            run_results = run_download_jobs(jobs)
+            runtime_jobs = [self._attach_runtime_download_context(job) for job in jobs]
+            run_results = run_download_jobs(runtime_jobs, max_workers=max_workers)
             run_artifact_path = self._write_artifact(
                 category="downloader/results",
                 stem=f"download_results_{videos_path.stem}",
-                payload={"results": run_results},
+                payload={"results": run_results, "summary": summarize_download_results(run_results)},
             )
             result["run_results_count"] = len(run_results)
             result["run_artifact_path"] = str(run_artifact_path)
             result["run_preview"] = run_results[:3]
+            result["run_summary"] = summarize_download_results(run_results)
         return result
+
+    def create_download_jobs_from_artifact(
+        self,
+        *,
+        artifact_path: str | Path,
+        output_dir: str | Path | None = None,
+        run: bool = False,
+        max_videos: int | None = None,
+        max_workers: int = 1,
+    ) -> dict[str, Any]:
+        self.bootstrap()
+        extracted = extract_videos_from_artifact(artifact_path)
+        videos = list(extracted.get("videos") or [])
+        resolved_artifact_path = Path(artifact_path)
+
+        for item in videos:
+            if isinstance(item, dict):
+                item["origin_artifact_path"] = str(resolved_artifact_path)
+                item["origin_kind"] = self._infer_download_artifact_kind(resolved_artifact_path)
+
+        if max_videos is not None and max_videos >= 0:
+            videos = videos[: int(max_videos)]
+
+        resolved_output_dir = Path(output_dir) if output_dir else (self.config.downloads_dir / "artifact")
+        jobs = build_download_jobs(videos, resolved_output_dir)
+        cookies_source = getattr(self.config.browser, "storage_state", None)
+        if cookies_source:
+            for job in jobs:
+                if isinstance(job, dict):
+                    job["cookies_source"] = str(cookies_source)
+        jobs_artifact_path = self._write_artifact(
+            category="downloader/jobs",
+            stem=f"download_jobs_from_{resolved_artifact_path.stem}",
+            payload={
+                "source_artifact_path": str(resolved_artifact_path),
+                "source_kind": self._infer_download_artifact_kind(resolved_artifact_path),
+                "jobs": jobs,
+            },
+        )
+
+        result: dict[str, Any] = {
+            "source_artifact_path": str(resolved_artifact_path),
+            "source_kind": self._infer_download_artifact_kind(resolved_artifact_path),
+            "extracted_videos_count": int(extracted.get("videos_count") or len(videos)),
+            "jobs_count": len(jobs),
+            "jobs_artifact_path": str(jobs_artifact_path),
+            "preview": jobs[:3],
+        }
+        if run:
+            runtime_jobs = [self._attach_runtime_download_context(job) for job in jobs]
+            run_results = run_download_jobs(runtime_jobs, max_workers=max_workers)
+            run_result = {
+                "jobs_file": str(jobs_artifact_path),
+                "results": run_results,
+                "summary": summarize_download_results(run_results),
+            }
+            run_artifact_path = self._write_artifact(
+                category="downloader/results",
+                stem=f"download_results_from_{resolved_artifact_path.stem}",
+                payload=run_result,
+            )
+            result["run_results_count"] = len(run_result.get("results") or [])
+            result["run_artifact_path"] = str(run_artifact_path)
+            result["run_preview"] = list(run_result.get("results") or [])[:3]
+            result["run_summary"] = dict(run_result.get("summary") or {})
+        return result
+
+    def run_download_jobs_file(
+        self,
+        *,
+        jobs_file: str | Path,
+        max_workers: int = 1,
+    ) -> dict[str, Any]:
+        self.bootstrap()
+        jobs_path = Path(jobs_file)
+        payload = json.loads(jobs_path.read_text(encoding="utf-8"))
+        jobs = list(payload.get("jobs") or []) if isinstance(payload, dict) else payload
+        if not isinstance(jobs, list):
+            raise ValueError("jobs_file must contain a JSON array or {'jobs': [...]} payload")
+        runtime_jobs = [self._attach_runtime_download_context(job) for job in jobs if isinstance(job, dict)]
+        run_result = {
+            "jobs_file": str(jobs_path),
+            "results": run_download_jobs(runtime_jobs, max_workers=max_workers),
+        }
+        run_result["summary"] = summarize_download_results(run_result["results"])
+        run_artifact_path = self._write_artifact(
+            category="downloader/results",
+            stem=f"download_results_rerun_{jobs_path.stem}",
+            payload=run_result,
+        )
+        run_result["run_artifact_path"] = str(run_artifact_path)
+        return run_result
 
     def _core_directories(self) -> dict[str, Path]:
         return {
@@ -696,6 +796,25 @@ class Orchestrator:
             "sessions_dir": self.config.data_dir / "sessions",
             "imports_dir": self.config.data_dir / "imports",
         }
+
+    def _infer_download_artifact_kind(self, artifact_path: Path) -> str:
+        normalized = str(artifact_path).replace("\\", "/").lower()
+        if "/collector/homepage/" in normalized:
+            return "homepage"
+        if "/collector/full-batch-chunks/" in normalized:
+            return "full-batch-chunk"
+        if "/collector/full-batch/" in normalized and "phase1_chunked_master" in normalized:
+            return "phase1-chunked-master"
+        if "/collector/full-batch/" in normalized:
+            return "full-batch"
+        if "/collector/batch/" in normalized:
+            return "homepage-batch"
+        return "artifact"
+
+    def _attach_runtime_download_context(self, job: dict[str, Any]) -> dict[str, Any]:
+        runtime_job = dict(job)
+        runtime_job["_app_config"] = self.config
+        return runtime_job
 
     def _load_db_api(self) -> Any | None:
         try:

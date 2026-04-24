@@ -66,6 +66,7 @@ def run_playwright_homepage_probe(config: Any, homepage_url: str) -> dict[str, A
     timeout_ms = int(getattr(browser_cfg, "timeout_ms", 30_000))
     locale = getattr(browser_cfg, "locale", "zh-CN")
     user_agent = getattr(browser_cfg, "user_agent", None)
+    storage_state = getattr(browser_cfg, "storage_state", None)
     engine = str(getattr(browser_cfg, "engine", "playwright")).lower()
     if engine not in {"chromium", "firefox", "webkit"}:
         engine = "chromium"
@@ -80,69 +81,39 @@ def run_playwright_homepage_probe(config: Any, homepage_url: str) -> dict[str, A
             context_kwargs: dict[str, Any] = {"locale": locale}
             if user_agent:
                 context_kwargs["user_agent"] = user_agent
+            if storage_state:
+                context_kwargs["storage_state"] = str(storage_state)
             context = launched_browser.new_context(**context_kwargs)
             page = context.new_page()
             response = page.goto(homepage_url, wait_until="domcontentloaded", timeout=timeout_ms)
-            try:
-                page.wait_for_load_state("networkidle", timeout=min(timeout_ms, 15_000))
-            except Exception:
-                pass
-            # Best-effort: switch to "作品" tab so video anchors are rendered.
-            for selector in (
-                "text=作品",
-                "text=全部作品",
-                "[data-e2e='user-post-tab']",
-                "[class*='post-tab']",
-            ):
+            probe_result = _capture_homepage_probe_once(page, timeout_ms=timeout_ms)
+            low_yield = (
+                probe_result.get("best_id_count", 0) < 8
+                or len(probe_result.get("dom_hrefs") or []) < 20
+                or not str(probe_result.get("title") or "").strip()
+            )
+            if low_yield:
                 try:
-                    target = page.locator(selector).first
-                    if target.count() > 0:
-                        target.click(timeout=1_500)
-                        page.wait_for_timeout(600)
-                        break
+                    page.reload(wait_until="domcontentloaded", timeout=timeout_ms)
                 except Exception:
-                    continue
-            best_html = page.content()
-            best_id_count = _count_embedded_video_ids(best_html)
-            idle_rounds = 0
-            max_rounds = 12
-            for round_index in range(max_rounds):
-                try:
-                    page.wait_for_timeout(1_500 if round_index < 3 else 2_500)
-                    page.mouse.wheel(0, 2200)
-                    page.wait_for_timeout(1_000 if round_index < 4 else 1_800)
-                    current_html = page.content()
-                    current_id_count = _count_embedded_video_ids(current_html)
-                    if current_id_count > best_id_count:
-                        best_html = current_html
-                        best_id_count = current_id_count
-                        idle_rounds = 0
-                    else:
-                        idle_rounds += 1
-                    if best_id_count >= 12 or idle_rounds >= 4:
-                        break
-                except Exception:
-                    break
-            page_html = best_html
-            try:
-                dom_hrefs = page.evaluate(
-                    """() => {
-                        const out = [];
-                        for (const a of Array.from(document.querySelectorAll('a[href]'))) {
-                            const href = (a.getAttribute('href') || '').trim();
-                            if (!href) continue;
-                            out.push(href);
-                        }
-                        return out.slice(0, 4000);
-                    }"""
+                    pass
+                probe_retry = _capture_homepage_probe_once(
+                    page,
+                    timeout_ms=max(timeout_ms, 60_000),
+                    aggressive=True,
                 )
-            except Exception:
-                dom_hrefs = []
+                if (
+                    probe_retry.get("best_id_count", 0) > probe_result.get("best_id_count", 0)
+                    or len(probe_retry.get("dom_hrefs") or []) > len(probe_result.get("dom_hrefs") or [])
+                ):
+                    probe_result = probe_retry
+            page_html = probe_result.get("page_html", "")
+            dom_hrefs = probe_result.get("dom_hrefs", [])
 
             return {
                 "homepage_url": homepage_url,
                 "final_url": page.url,
-                "title": page.title(),
+                "title": probe_result.get("title") or page.title(),
                 "http_status": response.status if response is not None else None,
                 "page_html": page_html,
                 "dom_hrefs": dom_hrefs,
@@ -150,6 +121,7 @@ def run_playwright_homepage_probe(config: Any, homepage_url: str) -> dict[str, A
                 "engine": engine,
                 "headless": headless,
                 "timeout_ms": timeout_ms,
+                "best_id_count": probe_result.get("best_id_count", 0),
                 "scanned_at": _now_iso(),
             }
     finally:
@@ -219,6 +191,90 @@ def run_playwright_homepage_probe_via_cdp(cdp_url: str, homepage_url: str) -> di
             }
         finally:
             browser.close()
+
+
+def _capture_homepage_probe_once(page: Any, *, timeout_ms: int, aggressive: bool = False) -> dict[str, Any]:
+    try:
+        page.wait_for_load_state("networkidle", timeout=min(timeout_ms, 15_000 if not aggressive else 30_000))
+    except Exception:
+        pass
+    _switch_to_post_tab(page, aggressive=aggressive)
+    if aggressive:
+        try:
+            page.wait_for_timeout(2_000)
+        except Exception:
+            pass
+    best_html = page.content()
+    best_id_count = _count_embedded_video_ids(best_html)
+    idle_rounds = 0
+    max_rounds = 12 if not aggressive else 18
+    for round_index in range(max_rounds):
+        try:
+            wait_before = 1_500 if round_index < 3 else 2_500
+            wait_after = 1_000 if round_index < 4 else 1_800
+            if aggressive:
+                wait_before += 1_000
+                wait_after += 800
+            page.wait_for_timeout(wait_before)
+            page.mouse.wheel(0, 2200 if not aggressive else 2800)
+            page.wait_for_timeout(wait_after)
+            current_html = page.content()
+            current_id_count = _count_embedded_video_ids(current_html)
+            if current_id_count > best_id_count:
+                best_html = current_html
+                best_id_count = current_id_count
+                idle_rounds = 0
+            else:
+                idle_rounds += 1
+            if best_id_count >= (12 if not aggressive else 20) or idle_rounds >= (4 if not aggressive else 6):
+                break
+        except Exception:
+            break
+    try:
+        dom_hrefs = page.evaluate(
+            """() => {
+                const out = [];
+                for (const a of Array.from(document.querySelectorAll('a[href]'))) {
+                    const href = (a.getAttribute('href') || '').trim();
+                    if (!href) continue;
+                    out.push(href);
+                }
+                return out.slice(0, 4000);
+            }"""
+        )
+    except Exception:
+        dom_hrefs = []
+    return {
+        "page_html": best_html,
+        "dom_hrefs": dom_hrefs,
+        "best_id_count": best_id_count,
+        "title": page.title(),
+    }
+
+
+def _switch_to_post_tab(page: Any, *, aggressive: bool = False) -> None:
+    selectors = (
+        "text=作品",
+        "text=全部作品",
+        "[data-e2e='user-post-tab']",
+        "[class*='post-tab']",
+        "[role='tab']",
+    )
+    for selector in selectors:
+        try:
+            target = page.locator(selector).first
+            if target.count() > 0:
+                target.click(timeout=1_500 if not aggressive else 3_000)
+                page.wait_for_timeout(600 if not aggressive else 1200)
+                if aggressive:
+                    try:
+                        target.click(timeout=1_200)
+                        page.wait_for_timeout(800)
+                    except Exception:
+                        pass
+                break
+        except Exception:
+            continue
 
 
 def extract_video_candidates_from_html(html: str, homepage_url: str, max_items: int) -> list[dict[str, Any]]:

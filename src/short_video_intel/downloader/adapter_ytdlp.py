@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -53,7 +54,12 @@ def detect_ytdlp() -> dict[str, Any]:
     }
 
 
-def run_ytdlp_download(video_url: str, output_path: str | Path) -> dict[str, Any]:
+def run_ytdlp_download(
+    video_url: str,
+    output_path: str | Path,
+    *,
+    cookies_source: str | Path | None = None,
+) -> dict[str, Any]:
     requested_output_path = Path(output_path)
     result: dict[str, Any] = {
         "status": "failed",
@@ -81,7 +87,15 @@ def run_ytdlp_download(video_url: str, output_path: str | Path) -> dict[str, Any
         result["error"] = "yt-dlp detected, but command arguments are unavailable"
         return result
 
-    command = _build_download_command(video_url, requested_output_path, command_args)
+    cookies_file = _prepare_cookies_file(cookies_source, requested_output_path)
+    if cookies_file is not None:
+        result["cookies_file"] = str(cookies_file)
+    command = _build_download_command(
+        video_url,
+        requested_output_path,
+        command_args,
+        cookies_file=cookies_file,
+    )
     try:
         completed = subprocess.run(
             command,
@@ -109,13 +123,20 @@ def run_ytdlp_download(video_url: str, output_path: str | Path) -> dict[str, Any
             "file_size": actual_path.stat().st_size,
             "command": command,
             "ytdlp_version": detection.get("version"),
+            "cookies_file": str(cookies_file) if cookies_file else None,
         }
     )
     return result
 
 
-def _build_download_command(video_url: str, output_path: Path, command_args: list[str]) -> list[str]:
-    return [
+def _build_download_command(
+    video_url: str,
+    output_path: Path,
+    command_args: list[str],
+    *,
+    cookies_file: Path | None = None,
+) -> list[str]:
+    command = [
         *command_args,
         "--no-playlist",
         "--newline",
@@ -123,6 +144,9 @@ def _build_download_command(video_url: str, output_path: Path, command_args: lis
         str(output_path),
         video_url,
     ]
+    if cookies_file is not None:
+        command[3:3] = ["--cookies", str(cookies_file)]
+    return command
 
 
 def _locate_downloaded_file(requested_output_path: Path) -> Path | None:
@@ -170,3 +194,57 @@ def _normalize_text(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _prepare_cookies_file(cookies_source: str | Path | None, requested_output_path: Path) -> Path | None:
+    if cookies_source is None:
+        return None
+    source = Path(str(cookies_source))
+    if not source.exists():
+        return None
+    if source.suffix.lower() in {".txt", ".cookies"}:
+        return source
+    if source.suffix.lower() != ".json":
+        return None
+
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    cookies = payload.get("cookies")
+    if not isinstance(cookies, list) or not cookies:
+        return None
+
+    cookies_path = requested_output_path.with_suffix(".cookies.txt")
+    lines = ["# Netscape HTTP Cookie File"]
+    for item in cookies:
+        if not isinstance(item, dict):
+            continue
+        domain = str(item.get("domain") or "").strip()
+        path = str(item.get("path") or "/").strip() or "/"
+        name = str(item.get("name") or "").strip()
+        value = str(item.get("value") or "")
+        if not domain or not name:
+            continue
+        include_subdomains = "TRUE" if domain.startswith(".") else "FALSE"
+        secure = "TRUE" if bool(item.get("secure")) else "FALSE"
+        expires = item.get("expires")
+        try:
+            expires_value = str(int(float(expires))) if expires not in (None, "", -1) else "0"
+        except Exception:
+            expires_value = "0"
+        lines.append(
+            "\t".join(
+                [
+                    domain,
+                    include_subdomains,
+                    path,
+                    secure,
+                    expires_value,
+                    name,
+                    value,
+                ]
+            )
+        )
+    cookies_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return cookies_path

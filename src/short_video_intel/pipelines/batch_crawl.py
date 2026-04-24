@@ -573,9 +573,9 @@ def _is_meaningful_comment_result(comments_result: Any) -> bool:
     if isinstance(scan_meta, dict):
         backend = str(scan_meta.get("backend") or "")
         stop_reason = str(scan_meta.get("stop_reason") or "")
-        if backend == "playwright:body_text-v1":
+        if backend in {"playwright:body_text-v1", "playwright:body_text-v2"}:
             return True
-        if stop_reason == "body_text_comments_captured":
+        if stop_reason in {"body_text_comments_captured", "body_text_comment_stubs_captured"}:
             return True
     return False
 

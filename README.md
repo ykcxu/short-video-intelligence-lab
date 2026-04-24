@@ -38,6 +38,8 @@
 - `short-video-intel crawl-video-detail --video-url <url>`
 - `short-video-intel crawl-video-comments --video-url <url>`
 - `short-video-intel build-download-jobs --videos-file videos.json --run`
+- `short-video-intel build-download-jobs-from-artifact --artifact <homepage-or-full-batch.json> --max-videos 20 --run`
+- `short-video-intel run-download-jobs --jobs-file <download_jobs.json> --workers 2`
 - `short-video-intel crawl-targets-batch --source-file inputs/douyin_homepages_seed.tsv --workers 2`
 - `short-video-intel crawl-targets-batch --from-db --limit 20 --persist-db`
 - `short-video-intel crawl-targets-full-batch --source-file inputs/douyin_homepages_seed.tsv --with-video-detail --with-comments --comment-pages 3 --workers 2`
@@ -46,11 +48,53 @@
 - `short-video-intel generate-phase1-chunked-report --artifact <phase1_chunked_master.json> --json-output <path> --md-output <path>`
 - `short-video-intel export-phase1-rerun-manifest --artifact <phase1_chunked_master.json> --output <path>`
 - `short-video-intel phase1-status-overview --json-output <path> --md-output <path>`
+- `short-video-intel phase1-recent-runs --limit 20 --json-output <path> --md-output <path>`
+- `short-video-intel summarize-homepage-batch --artifact <batch.json> --json-output <path> --md-output <path>`
 - `short-video-intel analyze-positive-factors --artifact <full-batch.json> --output <path>`
 - `short-video-intel analyze-video-fit --input <detail-or-batch.json> --output <path>`
 - `short-video-intel analyze-video-fit-full-batch --artifact <full-batch.json> --output <path>`
 
 `import-targets` 现支持 `csv/json/tsv`，并支持中文表头映射（如“主页链接/账号名/分类/部门”）。
+
+### 下载任务主链（新增）
+
+现在可以直接把采集产物转成下载任务，不必手工整理视频 URL：
+
+```powershell
+# 从主页采集结果生成下载任务
+short-video-intel build-download-jobs-from-artifact `
+  --artifact .\artifacts\collector\homepage\homepage_xxx.json `
+  --max-videos 10
+
+# 从 full-batch / phase1_chunked master 直接抽视频并执行
+short-video-intel build-download-jobs-from-artifact `
+  --artifact .\artifacts\collector\full-batch\phase1_chunked_master_xxx.json `
+  --max-videos 20 `
+  --run `
+  --workers 2
+
+# 对已生成的 jobs 文件重复执行
+short-video-intel run-download-jobs `
+  --jobs-file .\artifacts\downloader\jobs\download_jobs_from_phase1_chunked_master_xxx.json `
+  --workers 2
+```
+
+当前实现说明：
+
+- 支持输入 `homepage / batch / full-batch / full-batch-chunks / phase1_chunked_master` artifact
+- 下载任务会尽量保留：
+  - `source_name`
+  - `homepage_url`
+  - `video_url`
+  - `video_id`
+  - `origin_artifact_path`
+  - `origin_kind`
+- 当前机器若未安装 `yt-dlp`，会自动回退到 stub，并在 `downloads\artifact\<账号名>\*.json` 留下可追踪结果
+- 已安装 `yt-dlp` 时，会优先尝试真实下载
+- 若 `yt-dlp` 因 `fresh cookies` 等问题失败，会继续尝试：
+  - 浏览器辅助提取媒体直链
+  - 再用 HTTP 直接落地视频文件
+- 若两条真实下载链都失败，最后才回退到 stub
 
 ## 最短实操：扫码登录 + 一期批跑 + 周报生成
 
@@ -152,6 +196,18 @@ short-video-intel generate-phase1-chunked-report `
 short-video-intel phase1-status-overview `
   --json-output .\artifacts\analysis\phase1_status_overview.json `
   --md-output .\artifacts\analysis\phase1_status_overview.md
+
+# 2.2 看最近运行历史
+short-video-intel phase1-recent-runs `
+  --limit 20 `
+  --json-output .\artifacts\analysis\phase1_recent_runs.json `
+  --md-output .\artifacts\analysis\phase1_recent_runs.md
+
+# 2.3 汇总主页采集结果
+short-video-intel summarize-homepage-batch `
+  --artifact .\artifacts\collector\batch\batch_homepage_crawl_xxx.json `
+  --json-output .\artifacts\analysis\homepage_batch_summary.json `
+  --md-output .\artifacts\analysis\homepage_batch_summary.md
 
 # 3. 导出失败 target，作为下一轮补跑清单
 short-video-intel export-phase1-rerun-manifest `
@@ -372,3 +428,8 @@ short-video-intel analyze-positive-factors `
 - 视频分析 pipeline
 - ASR 批处理 worker
 - CLI 命令与配置文件
+## 当前本地默认浏览器模式
+
+- `config.local.yaml` 当前默认配置为 `browser.headless: true`
+- 也就是批量采集、批量下载、批量分析会尽量后台无窗口运行
+- 只有 `session-capture` 这类人工登录步骤，或明确使用调试命令时，才需要弹出可见浏览器

@@ -179,6 +179,8 @@ _METRIC_KEY_ALIASES: dict[str, tuple[str, ...]] = {
 
 _COUNT_VALUE_PATTERN = r"-?\d+(?:\.\d+)?(?:[,_]\d{3})*(?:\.\d+)?(?:\s*[万亿])?|-?\d+(?:\.\d+)?[万亿]"
 _BODY_COUNT_TOKEN_PATTERN = re.compile(r"(?<![\d:])\d+(?:\.\d+)?(?:万|亿)?(?![\d:])")
+_BODY_METRIC_WINDOW_CHARS = 260
+_BODY_METRIC_MARKER_TAIL_CHARS = 40
 
 
 def _extract_metrics_from_payload(html: str, body_text: str) -> tuple[VideoMetrics, dict[str, Any], list[str]]:
@@ -365,38 +367,28 @@ def _extract_metrics_from_body_text(body_text: str) -> tuple[dict[str, int], dic
         return metrics, diagnostics
 
     normalized = re.sub(r"\s+", " ", text)
-    if len(normalized) < 1000:
+    if len(normalized) < 300 and not _BODY_COUNT_TOKEN_PATTERN.search(normalized):
         diagnostics["window_preview"] = normalized[:300]
         return metrics, diagnostics
-    match = re.search(r"连播\s*(?P<section>.+?)(?:举报|发布时间：)", normalized)
-    if match:
-        section = match.group("section").strip()
-    else:
-        fallback_source = ""
-        if "发布时间：" in normalized:
-            publish_idx = normalized.find("发布时间：")
-            fallback_source = normalized[max(0, publish_idx - 220) : publish_idx]
-        elif "举报" in normalized:
-            report_idx = normalized.find("举报")
-            fallback_source = normalized[max(0, report_idx - 220) : report_idx]
-        if not fallback_source:
-            fallback_source = normalized[-220:]
-        section = fallback_source.strip()
-        diagnostics["fallback_window_used"] = True
+
+    section = _extract_body_metric_window(text)
     if not section:
         diagnostics["window_preview"] = normalized[:300]
         return metrics, diagnostics
-    diagnostics["window_preview"] = section[:300]
 
-    tail_window = re.sub(r"\s+", " ", section[-240:])
-    diagnostics["tail_preview"] = tail_window
-    count_tokens = _BODY_COUNT_TOKEN_PATTERN.findall(tail_window)
-    diagnostics["count_tokens"] = count_tokens[-8:]
-    diagnostics["has_first_comment_marker"] = "抢首评" in tail_window
+    diagnostics["window_preview"] = re.sub(r"\s+", " ", section)[:300]
+    lines = [token.strip() for token in re.split(r"[\s\r\n]+", section) if token and token.strip()]
+    diagnostics["tail_preview"] = " | ".join(lines[-12:])
+    diagnostics["has_first_comment_marker"] = any("抢首评" in line for line in lines)
+    numeric_lines = [
+        line for line in lines
+        if re.fullmatch(r"\d+(?:\.\d+)?(?:万|亿)?", line)
+    ]
+    diagnostics["count_tokens"] = numeric_lines[-8:]
 
-    parsed = [_parse_count_value(token) for token in count_tokens[-4:]]
-    parsed = [value for value in parsed if value is not None]
-    if parsed:
+    parsed = [_parse_count_value(token) for token in numeric_lines[-4:]]
+    parsed = [value for value in parsed if value is not None and value < 100_000_000]
+    if parsed and _looks_like_reasonable_metric_block(lines):
         diagnostics["matched"] = True
         metrics["like_count"] = parsed[0]
         if diagnostics["has_first_comment_marker"]:
@@ -406,6 +398,36 @@ def _extract_metrics_from_body_text(body_text: str) -> tuple[dict[str, int], dic
             metrics["comment_count"] = parsed[1] if len(parsed) >= 2 else 0
             metrics["share_count"] = parsed[-1] if len(parsed) >= 3 else 0
     return metrics, diagnostics
+
+
+def _extract_body_metric_window(text: str) -> str:
+    raw = str(text or "")
+    if not raw:
+        return ""
+
+    if "发布时间：" in raw:
+        publish_idx = raw.find("发布时间：")
+        return raw[max(0, publish_idx - _BODY_METRIC_WINDOW_CHARS) : publish_idx + _BODY_METRIC_MARKER_TAIL_CHARS]
+    if "举报" in raw:
+        report_idx = raw.find("举报")
+        return raw[max(0, report_idx - _BODY_METRIC_WINDOW_CHARS) : report_idx + _BODY_METRIC_MARKER_TAIL_CHARS]
+    normalized = re.sub(r"\s+", " ", raw)
+    match = re.search(r"连播\s*(?P<section>.+?)(?:举报|发布时间：)", normalized)
+    if match:
+        return match.group("section").strip()
+    return normalized[-_BODY_METRIC_WINDOW_CHARS:]
+
+
+def _looks_like_reasonable_metric_block(lines: list[str]) -> bool:
+    if not lines:
+        return False
+    joined = " ".join(lines[-12:])
+    noisy_tokens = ("获赞", "关注", "推荐视频", "下载客户端", "子琦老师讲语文")
+    if any(token in joined for token in noisy_tokens):
+        return False
+    if "发布时间" in joined:
+        return True
+    return "举报" in joined or "抢首评" in joined
 
 
 def _zero_out_candidate_metric(diagnostics: dict[str, Any], metric_name: str) -> None:

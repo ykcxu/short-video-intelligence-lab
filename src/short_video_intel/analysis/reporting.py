@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import csv
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
+import re
 
 from .positive_factors import build_recommendations, score_accounts_from_summary
 from .video_fit import analyze_video_fit, batch_analyze_video_fit
@@ -329,6 +331,207 @@ def get_phase1_status_overview(
         )
 
 
+def list_phase1_recent_runs(
+    *,
+    workspace: Path,
+    artifacts_dir: Path,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """List recent phase1-related artifacts for quick operations review."""
+
+    try:
+        normalized_limit = max(1, int(limit))
+        roots = [
+            artifacts_dir / "collector" / "batch",
+            artifacts_dir / "collector" / "full-batch",
+            artifacts_dir / "collector" / "full-batch-chunks",
+            artifacts_dir / "analysis",
+        ]
+        items: list[dict[str, Any]] = []
+        for root in roots:
+            if not root.exists():
+                continue
+            for path in root.rglob("*.json"):
+                if not path.is_file():
+                    continue
+                item = _build_recent_run_item(path, workspace=workspace)
+                if item:
+                    items.append(item)
+        items.sort(key=lambda row: row.get("updated_at", ""), reverse=True)
+        trimmed = items[:normalized_limit]
+        result = {
+            "ok": True,
+            "analysis_type": "phase1_recent_runs",
+            "workspace": str(workspace),
+            "count": len(trimmed),
+            "items": trimmed,
+        }
+        result["markdown"] = _build_phase1_recent_runs_markdown(trimmed)
+        return result
+    except Exception as exc:  # pragma: no cover - defensive wrapper
+        return _error_result(
+            AnalysisError(f"{type(exc).__name__}: {exc}"),
+            analysis_type="phase1_recent_runs",
+        )
+
+
+def summarize_homepage_batch(
+    *,
+    workspace: Path,
+    artifacts_dir: Path,
+    artifact: Path | None = None,
+    output: Path | None = None,
+) -> dict[str, Any]:
+    """Summarize a homepage batch crawl artifact into an account-level table."""
+
+    try:
+        resolved_artifact = _resolve_homepage_batch_artifact(
+            workspace=workspace,
+            artifacts_dir=artifacts_dir,
+            artifact=artifact,
+        )
+        payload = _load_json(resolved_artifact)
+        batch_payload = _as_dict(payload.get("batch"))
+        results = [item for item in list(batch_payload.get("results") or []) if isinstance(item, Mapping)]
+        summary_rows: list[dict[str, Any]] = []
+        total_videos = 0
+        for item in results:
+            target = _as_dict(item.get("target"))
+            crawl_result = _as_dict(item.get("crawl_result"))
+            videos = [video for video in list(crawl_result.get("videos") or []) if isinstance(video, Mapping)]
+            diagnostics = _as_dict(crawl_result.get("diagnostics"))
+            warnings = list(crawl_result.get("warnings") or [])
+            row = {
+                "source_name": _safe_text(target.get("source_name")),
+                "homepage_url": _safe_text(target.get("homepage_url")),
+                "category_lv1": _safe_text(target.get("category_lv1")),
+                "category_lv2": _safe_text(target.get("category_lv2")),
+                "platform": _safe_text(target.get("platform")),
+                "video_count": len(videos),
+                "sample_video_ids": [str(video.get("video_id")) for video in videos[:5] if video.get("video_id")],
+                "sample_video_urls": [str(video.get("video_url")) for video in videos[:3] if video.get("video_url")],
+                "backend": _safe_text(crawl_result.get("backend")),
+                "extraction_version": _safe_text(crawl_result.get("extraction_version")),
+                "dom_href_count": _safe_int(diagnostics.get("dom_href_count")),
+                "merged_unique_video_ids": _safe_int(diagnostics.get("merged_unique_video_ids")),
+                "warnings_count": len(warnings),
+                "warnings_preview": [str(item) for item in warnings[:3]],
+            }
+            summary_rows.append(row)
+            total_videos += len(videos)
+
+        summary_rows.sort(
+            key=lambda row: (-_safe_int(row.get("video_count")), _safe_text(row.get("source_name"))),
+        )
+        result = {
+            "ok": True,
+            "analysis_type": "homepage_batch_summary",
+            "artifact_path": str(resolved_artifact),
+            "target_count": len(summary_rows),
+            "video_total": total_videos,
+            "rows": summary_rows,
+        }
+        result["markdown"] = _build_homepage_batch_summary_markdown(result)
+        if output is not None:
+            output_path = _resolve_output_path(workspace=workspace, output=output)
+            _write_json(output_path, result)
+            result["output_path"] = str(output_path)
+        return result
+    except AnalysisError as exc:
+        return _error_result(exc, analysis_type="homepage_batch_summary")
+    except Exception as exc:  # pragma: no cover - defensive wrapper
+        return _error_result(
+            AnalysisError(f"{type(exc).__name__}: {exc}"),
+            analysis_type="homepage_batch_summary",
+        )
+
+
+def build_project_progress_dashboard(
+    *,
+    workspace: Path,
+    artifacts_dir: Path,
+    download_target_per_account: int = 50,
+) -> dict[str, Any]:
+    """Build a compact, human-readable progress dashboard for the project."""
+
+    try:
+        seed_path = workspace / "inputs" / "douyin_homepages_seed.tsv"
+        target_accounts = _load_target_accounts(seed_path)
+        downloaded_counts = _count_downloaded_videos(workspace)
+        normalized_downloaded_counts = _normalize_downloaded_counts(downloaded_counts)
+        detail_counts = _count_detail_coverage(workspace, downloaded_counts)
+        comment_counts = _count_comment_coverage(workspace)
+
+        account_rows: list[dict[str, Any]] = []
+        completed_accounts = 0
+        for account_name in sorted(target_accounts):
+            target = int(download_target_per_account)
+            downloaded = _lookup_download_count(account_name, downloaded_counts, normalized_downloaded_counts)
+            progress = min(1.0, downloaded / target) if target > 0 else 0.0
+            remaining = max(0, target - downloaded)
+            completed = downloaded >= target
+            if completed:
+                completed_accounts += 1
+            account_rows.append(
+                {
+                    "source_name": account_name,
+                    "downloaded": downloaded,
+                    "target": target,
+                    "remaining_to_50": remaining,
+                    "completed": completed,
+                    "progress": progress,
+                    "progress_bar": _render_progress_bar(progress),
+                }
+            )
+
+        total_target_accounts = len(target_accounts)
+        total_downloaded = sum(row["downloaded"] for row in account_rows)
+        total_target_video_goal = total_target_accounts * int(download_target_per_account)
+        progress_block = {
+            "download_goal_accounts": total_target_accounts,
+            "download_goal_completed_accounts": completed_accounts,
+            "download_goal_remaining_accounts": max(0, total_target_accounts - completed_accounts),
+            "download_goal_target_videos": total_target_video_goal,
+            "download_goal_downloaded_videos": total_downloaded,
+            "detail_covered_videos": detail_counts["detail_covered"],
+            "detail_total_downloaded_videos": detail_counts["downloaded"],
+            "comment_videos_with_nonempty_comments": comment_counts["nonempty_videos"],
+            "comment_videos_with_artifacts": comment_counts["artifact_videos"],
+            "comment_total_rows": comment_counts["total_rows"],
+        }
+        progress_block["download_goal_progress"] = (
+            min(1.0, total_downloaded / total_target_video_goal) if total_target_video_goal else 0.0
+        )
+        progress_block["download_goal_progress_bar"] = _render_progress_bar(progress_block["download_goal_progress"])
+        progress_block["detail_coverage_progress"] = (
+            min(1.0, detail_counts["detail_covered"] / detail_counts["downloaded"])
+            if detail_counts["downloaded"]
+            else 0.0
+        )
+        progress_block["detail_coverage_progress_bar"] = _render_progress_bar(progress_block["detail_coverage_progress"])
+        progress_block["comment_quality_progress"] = (
+            min(1.0, comment_counts["nonempty_videos"] / comment_counts["artifact_videos"])
+            if comment_counts["artifact_videos"]
+            else 0.0
+        )
+        progress_block["comment_quality_progress_bar"] = _render_progress_bar(progress_block["comment_quality_progress"])
+
+        markdown = _build_project_progress_markdown(progress_block, account_rows)
+        return {
+            "ok": True,
+            "analysis_type": "project_progress_dashboard",
+            "generated_at": datetime.now(UTC).isoformat(),
+            "workspace": str(workspace),
+            "artifacts_dir": str(artifacts_dir),
+            "download_target_per_account": int(download_target_per_account),
+            "progress": progress_block,
+            "accounts": account_rows,
+            "markdown": markdown,
+        }
+    except Exception as exc:  # pragma: no cover - defensive wrapper
+        return _error_result(AnalysisError(f"{type(exc).__name__}: {exc}"), analysis_type="project_progress_dashboard")
+
+
 def analyze_positive_factors(
     *,
     workspace: Path,
@@ -421,6 +624,39 @@ def _find_latest_standard_full_batch_artifact(root: Path) -> Path:
     raise AnalysisError(f"no standard full-batch artifact json files found under: {root}")
 
 
+def _resolve_homepage_batch_artifact(
+    *,
+    workspace: Path,
+    artifacts_dir: Path,
+    artifact: Path | None,
+) -> Path:
+    if artifact is not None:
+        resolved = _resolve_user_path(workspace=workspace, value=artifact)
+        if not resolved.exists():
+            raise AnalysisError(f"artifact not found: {resolved}")
+        if not resolved.is_file():
+            raise AnalysisError(f"artifact is not a file: {resolved}")
+        return resolved
+
+    root = artifacts_dir / "collector" / "batch"
+    if not root.exists():
+        raise AnalysisError(f"homepage batch artifact directory not found: {root}")
+
+    candidates = sorted(
+        [path for path in root.rglob("*.json") if path.is_file()],
+        key=lambda path: (path.stat().st_mtime, path.name),
+        reverse=True,
+    )
+    for candidate in candidates:
+        try:
+            payload = _load_json(candidate)
+        except Exception:
+            continue
+        if isinstance(_mapping_get(payload, "batch"), Mapping):
+            return candidate
+    raise AnalysisError(f"no homepage batch artifact json files found under: {root}")
+
+
 def _find_latest_phase1_chunked_artifact(root: Path) -> Path:
     if not root.exists():
         raise AnalysisError(f"full-batch artifact directory not found: {root}")
@@ -471,6 +707,50 @@ def _build_artifact_overview(
         "chunk_count": _safe_int(global_summary.get("chunk_count") or payload.get("chunk_count")),
         "chunk_failed_count": _safe_int(global_summary.get("chunk_failed_count")),
         "rerun_targets_count": _safe_int(payload.get("rerun_targets_count")),
+    }
+
+
+def _build_recent_run_item(path: Path, *, workspace: Path) -> dict[str, Any]:
+    try:
+        payload = _load_json(path)
+    except Exception:
+        payload = {}
+    stat = path.stat()
+    relative_path = path
+    try:
+        relative_path = path.relative_to(workspace)
+    except ValueError:
+        pass
+
+    mode = _safe_text(_mapping_get(payload, "mode"))
+    if not mode:
+        if "batch" in path.parts and "collector" in path.parts:
+            mode = "batch"
+        if "analysis" in path.parts:
+            mode = _safe_text(_mapping_get(payload, "analysis_type")) or "analysis"
+        if path.name.startswith("batch_full_collect") or path.name.startswith("sample_full_batch"):
+            mode = "full_batch"
+
+    summary_block = {}
+    try:
+        if isinstance(payload, Mapping):
+            summary_block = _extract_summary_block(payload)
+    except Exception:
+        summary_block = {}
+    global_summary = _as_dict(_mapping_get(summary_block, "global_summary"))
+    return {
+        "artifact_name": path.name,
+        "artifact_path": str(path),
+        "relative_path": str(relative_path),
+        "mode": mode or "unknown",
+        "updated_at": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(),
+        "target_count": _safe_int(global_summary.get("target_count") or _mapping_get(payload, "targets_loaded")),
+        "video_total": _safe_int(global_summary.get("video_total")),
+        "detail_meaningful_count": _safe_int(global_summary.get("detail_meaningful_count")),
+        "comment_meaningful_count": _safe_int(global_summary.get("comment_meaningful_count")),
+        "failed_count": _safe_int(global_summary.get("failed_count")),
+        "chunk_count": _safe_int(global_summary.get("chunk_count") or _mapping_get(payload, "chunk_count")),
+        "rerun_targets_count": _safe_int(_mapping_get(payload, "rerun_targets_count")),
     }
 
 
@@ -544,6 +824,157 @@ def _resolve_user_path(*, workspace: Path, value: Path) -> Path:
     if not resolved.is_absolute():
         resolved = workspace / resolved
     return resolved.resolve()
+
+
+def _load_target_accounts(seed_path: Path) -> list[str]:
+    if not seed_path.exists():
+        return []
+    accounts: list[str] = []
+    with seed_path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        for row in reader:
+            name = _safe_text(row.get("账号名"))
+            if name and name not in accounts:
+                accounts.append(name)
+    return accounts
+
+
+def _count_downloaded_videos(workspace: Path) -> dict[str, int]:
+    root = workspace / "downloads" / "artifact"
+    counts: dict[str, int] = {}
+    if not root.exists():
+        return counts
+    for account_dir in root.iterdir():
+        if not account_dir.is_dir():
+            continue
+        video_files = [
+            p
+            for p in account_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in {".mp4", ".m3u8", ".mov", ".webm", ".mkv"}
+        ]
+        counts[account_dir.name] = len(video_files)
+    return counts
+
+
+def _normalize_account_name(value: str) -> str:
+    # 业务原因：账号名里可能包含无法稳定保存的 emoji，TSV 中会退化成问号。
+    return re.sub(r"\?+", "", _safe_text(value)).strip()
+
+
+def _normalize_downloaded_counts(downloaded_counts: Mapping[str, int]) -> dict[str, int]:
+    normalized: dict[str, int] = {}
+    for account_name, count in downloaded_counts.items():
+        normalized_name = _normalize_account_name(account_name)
+        if normalized_name:
+            normalized[normalized_name] = max(int(count), normalized.get(normalized_name, 0))
+    return normalized
+
+
+def _lookup_download_count(
+    account_name: str,
+    downloaded_counts: Mapping[str, int],
+    normalized_downloaded_counts: Mapping[str, int],
+) -> int:
+    exact_count = int(downloaded_counts.get(account_name, 0))
+    if exact_count:
+        return exact_count
+    normalized_name = _normalize_account_name(account_name)
+    return int(normalized_downloaded_counts.get(normalized_name, 0))
+
+
+def _count_detail_coverage(workspace: Path, downloaded_counts: Mapping[str, int]) -> dict[str, int]:
+    video_dir = workspace / "artifacts" / "collector" / "video"
+    downloaded_ids: set[str] = set()
+    root = workspace / "downloads" / "artifact"
+    if root.exists():
+        for account_dir in root.iterdir():
+            if not account_dir.is_dir():
+                continue
+            for path in account_dir.iterdir():
+                if path.is_file() and path.suffix.lower() in {".mp4", ".m3u8", ".mov", ".webm", ".mkv"}:
+                    match = re.search(r"_(\d+)\.(?:mp4|m3u8|mov|webm|mkv)$", path.name)
+                    if match:
+                        downloaded_ids.add(match.group(1))
+
+    detail_ids: set[str] = set()
+    if video_dir.exists():
+        for path in video_dir.glob("video_detail_*.json"):
+            try:
+                payload = _load_json(path)
+            except Exception:
+                continue
+            url = _safe_text(_mapping_get(payload, "video_url"))
+            match = re.search(r"/video/([A-Za-z0-9_-]+)", url)
+            if match:
+                detail_ids.add(match.group(1))
+
+    return {
+        "downloaded": len(downloaded_ids),
+        "detail_covered": len(downloaded_ids.intersection(detail_ids)),
+    }
+
+
+def _count_comment_coverage(workspace: Path) -> dict[str, int]:
+    comments_dir = workspace / "artifacts" / "collector" / "comments"
+    artifact_videos = 0
+    nonempty_videos = 0
+    total_rows = 0
+    if not comments_dir.exists():
+        return {
+            "artifact_videos": 0,
+            "nonempty_videos": 0,
+            "total_rows": 0,
+        }
+    latest_by_video: dict[str, dict[str, Any]] = {}
+    for path in sorted(comments_dir.glob("video_comments_*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            payload = _load_json(path)
+        except Exception:
+            continue
+        video_url = _safe_text(_mapping_get(payload, "video_url"))
+        match = re.search(r"/video/([A-Za-z0-9_-]+)", video_url)
+        if not match:
+            continue
+        video_id = match.group(1)
+        if video_id in latest_by_video:
+            continue
+        latest_by_video[video_id] = payload
+    artifact_videos = len(latest_by_video)
+    for payload in latest_by_video.values():
+        comments = list(_mapping_get(payload, "comments") or [])
+        if comments:
+            nonempty_videos += 1
+            total_rows += len(comments)
+    return {
+        "artifact_videos": artifact_videos,
+        "nonempty_videos": nonempty_videos,
+        "total_rows": total_rows,
+    }
+
+
+def _render_progress_bar(progress: float, width: int = 20) -> str:
+    progress = max(0.0, min(1.0, float(progress)))
+    filled = int(round(progress * width))
+    filled = max(0, min(width, filled))
+    return "[" + ("█" * filled) + ("░" * (width - filled)) + f"] {int(round(progress * 100)):3d}%"
+
+
+def _build_project_progress_markdown(progress: Mapping[str, Any], accounts: list[dict[str, Any]]) -> str:
+    lines = [
+        "# 项目进度面板",
+        "",
+        f"- 下载目标完成度：{progress.get('download_goal_progress_bar', '')}  ({progress.get('download_goal_completed_accounts', 0)}/{progress.get('download_goal_accounts', 0)} 账号达到 50+)",
+        f"- 视频下载总目标：{progress.get('download_goal_downloaded_videos', 0)}/{progress.get('download_goal_target_videos', 0)}",
+        f"- detail 覆盖：{progress.get('detail_coverage_progress_bar', '')}  ({progress.get('detail_covered_videos', 0)}/{progress.get('detail_total_downloaded_videos', 0)})",
+        f"- 评论命中：{progress.get('comment_quality_progress_bar', '')}  ({progress.get('comment_videos_with_nonempty_comments', 0)}/{progress.get('comment_videos_with_artifacts', 0)} 有评论正文)",
+        "",
+        "## 账号下载进度",
+    ]
+    for row in accounts:
+        lines.append(
+            f"- {row['source_name']}: {row['progress_bar']}  {row['downloaded']}/{row['target']}（还差 {row['remaining_to_50']}）"
+        )
+    return "\n".join(lines)
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -1027,6 +1458,62 @@ def _build_phase1_status_overview_markdown(result: Mapping[str, Any]) -> str:
         f"- detail_meaningful_count：{_safe_int(latest_chunked.get('detail_meaningful_count'))}",
         f"- comment_meaningful_count：{_safe_int(latest_chunked.get('comment_meaningful_count'))}",
     ]
+    return "\n".join(lines).strip() + "\n"
+
+
+def _build_phase1_recent_runs_markdown(items: list[dict[str, Any]]) -> str:
+    lines = ["# Phase1 最近运行历史", ""]
+    if not items:
+        lines.append("- 暂无 artifact")
+        return "\n".join(lines).strip() + "\n"
+    for item in items:
+        lines.extend(
+            [
+                f"## {item.get('artifact_name', '')}",
+                f"- mode：{item.get('mode', '')}",
+                f"- updated_at：{item.get('updated_at', '')}",
+                f"- path：{item.get('relative_path', '')}",
+                f"- target_count：{_safe_int(item.get('target_count'))}",
+                f"- video_total：{_safe_int(item.get('video_total'))}",
+                f"- detail_meaningful_count：{_safe_int(item.get('detail_meaningful_count'))}",
+                f"- comment_meaningful_count：{_safe_int(item.get('comment_meaningful_count'))}",
+                f"- failed_count：{_safe_int(item.get('failed_count'))}",
+                f"- chunk_count：{_safe_int(item.get('chunk_count'))}",
+                f"- rerun_targets_count：{_safe_int(item.get('rerun_targets_count'))}",
+                "",
+            ]
+        )
+    return "\n".join(lines).strip() + "\n"
+
+
+def _build_homepage_batch_summary_markdown(result: Mapping[str, Any]) -> str:
+    rows = [item for item in list(result.get("rows") or []) if isinstance(item, Mapping)]
+    lines = [
+        "# 主页采集结果汇总",
+        "",
+        f"- artifact：{_safe_text(result.get('artifact_path'))}",
+        f"- target_count：{_safe_int(result.get('target_count'))}",
+        f"- video_total：{_safe_int(result.get('video_total'))}",
+        "",
+        "## 账号汇总",
+    ]
+    if not rows:
+        lines.append("- 暂无数据")
+        return "\n".join(lines).strip() + "\n"
+    for row in rows:
+        sample_ids = "、".join(str(item) for item in list(row.get("sample_video_ids") or [])[:5])
+        lines.extend(
+            [
+                f"### {_safe_text(row.get('source_name')) or _safe_text(row.get('homepage_url'))}",
+                f"- category：{_safe_text(row.get('category_lv1'))} / {_safe_text(row.get('category_lv2'))}",
+                f"- video_count：{_safe_int(row.get('video_count'))}",
+                f"- backend：{_safe_text(row.get('backend'))}",
+                f"- extraction_version：{_safe_text(row.get('extraction_version'))}",
+                f"- warnings_count：{_safe_int(row.get('warnings_count'))}",
+                f"- sample_video_ids：{sample_ids or '-'}",
+                "",
+            ]
+        )
     return "\n".join(lines).strip() + "\n"
 
 

@@ -9,12 +9,17 @@ from typing import Any
 from .analysis import reporting as reporting_module
 from .analysis.reporting import (
     analyze_positive_factors,
+    build_project_progress_dashboard,
     export_phase1_rerun_manifest,
     generate_phase1_chunked_report,
     get_phase1_status_overview,
+    list_phase1_recent_runs,
+    summarize_homepage_batch,
     analyze_video_fit_from_file,
     analyze_video_fit_from_full_batch,
 )
+from .analysis.local_video_inputs import prepare_local_video_analysis_inputs
+from .analysis.local_video_fit import analyze_local_video_inputs_file
 from .browser.session_manager import INVALID_SESSION_CHARS
 from .config import load_config
 from .orchestrator import Orchestrator
@@ -178,7 +183,66 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Execute the generated stub download jobs immediately.",
     )
+    download_jobs_parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Download worker count when --run is enabled.",
+    )
     download_jobs_parser.set_defaults(func=_cmd_build_download_jobs)
+
+    download_jobs_from_artifact_parser = subparsers.add_parser(
+        "build-download-jobs-from-artifact",
+        help="Extract videos from homepage/full-batch artifacts and build download jobs.",
+    )
+    download_jobs_from_artifact_parser.add_argument(
+        "--artifact",
+        required=True,
+        type=Path,
+        help="Collector artifact path: homepage, batch, full-batch, or phase1 chunked master/chunk.",
+    )
+    download_jobs_from_artifact_parser.add_argument(
+        "--output-dir",
+        default=None,
+        type=Path,
+        help="Optional output directory for generated download jobs and downloaded files.",
+    )
+    download_jobs_from_artifact_parser.add_argument(
+        "--max-videos",
+        type=int,
+        default=None,
+        help="Optional cap on extracted videos before building jobs.",
+    )
+    download_jobs_from_artifact_parser.add_argument(
+        "--run",
+        action="store_true",
+        help="Execute generated download jobs immediately.",
+    )
+    download_jobs_from_artifact_parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Download worker count when --run is enabled.",
+    )
+    download_jobs_from_artifact_parser.set_defaults(func=_cmd_build_download_jobs_from_artifact)
+
+    run_download_jobs_parser = subparsers.add_parser(
+        "run-download-jobs",
+        help="Execute a previously generated download jobs artifact.",
+    )
+    run_download_jobs_parser.add_argument(
+        "--jobs-file",
+        required=True,
+        type=Path,
+        help="Path to a download jobs JSON artifact.",
+    )
+    run_download_jobs_parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Download worker count.",
+    )
+    run_download_jobs_parser.set_defaults(func=_cmd_run_download_jobs_file)
 
     batch_parser = subparsers.add_parser(
         "crawl-targets-batch",
@@ -477,6 +541,78 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     phase1_status_parser.set_defaults(func=_cmd_phase1_status_overview)
 
+    project_progress_parser = subparsers.add_parser(
+        "project-progress",
+        help="Show a dashboard-style progress view for downloads, detail, and comments.",
+    )
+    project_progress_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=None,
+        help="Optional path to write JSON progress output.",
+    )
+    project_progress_parser.add_argument(
+        "--md-output",
+        type=Path,
+        default=None,
+        help="Optional path to write Markdown progress output.",
+    )
+    project_progress_parser.add_argument(
+        "--download-target-per-account",
+        type=int,
+        default=50,
+        help="Target number of downloaded videos per account used for the progress bars.",
+    )
+    project_progress_parser.set_defaults(func=_cmd_project_progress)
+
+    recent_runs_parser = subparsers.add_parser(
+        "phase1-recent-runs",
+        help="List recent phase1-related artifacts across collector and analysis directories.",
+    )
+    recent_runs_parser.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Maximum number of recent items to return.",
+    )
+    recent_runs_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=None,
+        help="Optional path to write JSON overview.",
+    )
+    recent_runs_parser.add_argument(
+        "--md-output",
+        type=Path,
+        default=None,
+        help="Optional path to write Markdown overview.",
+    )
+    recent_runs_parser.set_defaults(func=_cmd_phase1_recent_runs)
+
+    homepage_summary_parser = subparsers.add_parser(
+        "summarize-homepage-batch",
+        help="Summarize a homepage batch artifact into an account-level result table.",
+    )
+    homepage_summary_parser.add_argument(
+        "--artifact",
+        type=Path,
+        default=None,
+        help="Path to homepage batch artifact JSON (default: latest under artifacts/collector/batch).",
+    )
+    homepage_summary_parser.add_argument(
+        "--json-output",
+        type=Path,
+        default=None,
+        help="Optional path to write JSON summary.",
+    )
+    homepage_summary_parser.add_argument(
+        "--md-output",
+        type=Path,
+        default=None,
+        help="Optional path to write Markdown summary.",
+    )
+    homepage_summary_parser.set_defaults(func=_cmd_summarize_homepage_batch)
+
     analysis_parser = subparsers.add_parser(
         "analyze-positive-factors",
         help="Score positive factors from a full-batch artifact and export recommendations.",
@@ -530,6 +666,48 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional path to save fit analysis JSON.",
     )
     video_fit_full_batch_parser.set_defaults(func=_cmd_analyze_video_fit_full_batch)
+
+    local_video_inputs_parser = subparsers.add_parser(
+        "prepare-local-video-inputs",
+        help="Build local analysis-ready manifest from downloaded video result artifacts.",
+    )
+    local_video_inputs_parser.add_argument(
+        "--artifact",
+        type=Path,
+        default=None,
+        help="Path to downloader results artifact JSON (default: latest under artifacts/downloader/results).",
+    )
+    local_video_inputs_parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional path to save local video input manifest JSON.",
+    )
+    local_video_inputs_parser.add_argument(
+        "--frames-per-video",
+        type=int,
+        default=3,
+        help="How many sample frames to extract per valid video.",
+    )
+    local_video_inputs_parser.set_defaults(func=_cmd_prepare_local_video_inputs)
+
+    local_video_fit_parser = subparsers.add_parser(
+        "analyze-local-video-fit",
+        help="Analyze local video manifests generated from downloaded mp4 files.",
+    )
+    local_video_fit_parser.add_argument(
+        "--artifact",
+        required=True,
+        type=Path,
+        help="Path to local_video_inputs manifest JSON.",
+    )
+    local_video_fit_parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional path to save local video fit result JSON.",
+    )
+    local_video_fit_parser.set_defaults(func=_cmd_analyze_local_video_fit)
 
     return parser
 
@@ -592,6 +770,24 @@ def _cmd_build_download_jobs(orchestrator: Orchestrator, args: argparse.Namespac
         videos_file=args.videos_file,
         output_dir=args.output_dir,
         run=args.run,
+        max_workers=args.workers,
+    )
+
+
+def _cmd_build_download_jobs_from_artifact(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    return orchestrator.create_download_jobs_from_artifact(
+        artifact_path=args.artifact,
+        output_dir=args.output_dir,
+        run=args.run,
+        max_videos=args.max_videos,
+        max_workers=args.workers,
+    )
+
+
+def _cmd_run_download_jobs_file(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    return orchestrator.run_download_jobs_file(
+        jobs_file=args.jobs_file,
+        max_workers=args.workers,
     )
 
 
@@ -778,6 +974,80 @@ def _cmd_phase1_status_overview(orchestrator: Orchestrator, args: argparse.Names
     return result
 
 
+def _cmd_phase1_recent_runs(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    result = list_phase1_recent_runs(
+        workspace=orchestrator.config.workspace,
+        artifacts_dir=orchestrator.config.artifacts_dir,
+        limit=args.limit,
+    )
+    if args.json_output is not None:
+        json_output_path = _resolve_cli_output_path(orchestrator, args.json_output)
+        with json_output_path.open("w", encoding="utf-8") as handle:
+            json.dump(result, handle, ensure_ascii=False, indent=2)
+        result["json_output_path"] = str(json_output_path)
+    if args.md_output is not None:
+        markdown_content = _extract_markdown_report(result)
+        if markdown_content is None:
+            return {
+                "ok": False,
+                "error": {
+                    "type": "ValueError",
+                    "message": "markdown output requested but recent-runs markdown text not found in result",
+                },
+            }
+        md_output_path = _resolve_cli_output_path(orchestrator, args.md_output)
+        md_output_path.write_text(markdown_content, encoding="utf-8")
+        result["md_output_path"] = str(md_output_path)
+    return result
+
+
+def _cmd_project_progress(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    result = build_project_progress_dashboard(
+        workspace=orchestrator.config.workspace,
+        artifacts_dir=orchestrator.config.artifacts_dir,
+        download_target_per_account=int(args.download_target_per_account),
+    )
+    if not result.get("ok"):
+        return result
+
+    if args.json_output is not None:
+        output_path = orchestrator.config.workspace / args.json_output if not args.json_output.is_absolute() else args.json_output
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        result["json_output_path"] = str(output_path)
+
+    if args.md_output is not None:
+        output_path = orchestrator.config.workspace / args.md_output if not args.md_output.is_absolute() else args.md_output
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(str(result.get("markdown") or ""), encoding="utf-8")
+        result["md_output_path"] = str(output_path)
+
+    return result
+
+
+def _cmd_summarize_homepage_batch(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    result = summarize_homepage_batch(
+        workspace=orchestrator.config.workspace,
+        artifacts_dir=orchestrator.config.artifacts_dir,
+        artifact=args.artifact,
+        output=args.json_output,
+    )
+    if args.md_output is not None:
+        markdown_content = _extract_markdown_report(result)
+        if markdown_content is None:
+            return {
+                "ok": False,
+                "error": {
+                    "type": "ValueError",
+                    "message": "markdown output requested but homepage summary markdown text not found in result",
+                },
+            }
+        md_output_path = _resolve_cli_output_path(orchestrator, args.md_output)
+        md_output_path.write_text(markdown_content, encoding="utf-8")
+        result["md_output_path"] = str(md_output_path)
+    return result
+
+
 def _cmd_analyze_positive_factors(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
     return analyze_positive_factors(
         workspace=orchestrator.config.workspace,
@@ -799,6 +1069,24 @@ def _cmd_analyze_video_fit_full_batch(orchestrator: Orchestrator, args: argparse
     return analyze_video_fit_from_full_batch(
         workspace=orchestrator.config.workspace,
         artifacts_dir=orchestrator.config.artifacts_dir,
+        artifact=args.artifact,
+        output=args.output,
+    )
+
+
+def _cmd_prepare_local_video_inputs(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    return prepare_local_video_analysis_inputs(
+        workspace=orchestrator.config.workspace,
+        artifacts_dir=orchestrator.config.artifacts_dir,
+        artifact=args.artifact,
+        output=args.output,
+        frames_per_video=args.frames_per_video,
+    )
+
+
+def _cmd_analyze_local_video_fit(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    return analyze_local_video_inputs_file(
+        workspace=orchestrator.config.workspace,
         artifact=args.artifact,
         output=args.output,
     )

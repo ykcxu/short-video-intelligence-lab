@@ -35,3 +35,8 @@ downloads/
 .env
 *.token
 cookies/
+
+# Local runtime config/state
+config.local.yaml
+state/
+temp_*.py
