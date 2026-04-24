@@ -102,6 +102,19 @@ def _build_steps(workspace: Path, top_n: int, log_limit: int, skip_sqlite: bool)
             ],
         },
         {
+            "name": "build_strict_pool_gap_report",
+            "command": [
+                python_cmd,
+                str(tool_dir / "build_strict_pool_gap_report.py"),
+                "--workspace",
+                str(workspace),
+                "--json-output",
+                "artifacts/status/strict_pool_gap_report.json",
+                "--md-output",
+                "artifacts/status/strict_pool_gap_report.md",
+            ],
+        },
+        {
             "name": "build_run_summary",
             "command": [
                 python_cmd,

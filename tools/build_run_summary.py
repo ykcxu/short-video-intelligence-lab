@@ -12,6 +12,7 @@ STATUS_FILES = {
     "data_quality_report": "artifacts/status/data_quality_report.json",
     "positive_factors_report": "artifacts/analysis/positive_factors_report.json",
     "positive_factors_strict_valid_report": "artifacts/analysis/positive_factors_strict_valid_report.json",
+    "strict_pool_gap_report": "artifacts/status/strict_pool_gap_report.json",
 }
 
 
@@ -82,6 +83,8 @@ def _build_report_highlights(report_name: str, payload: dict[str, Any]) -> dict[
         return _data_quality_highlights(payload)
     if report_name in {"positive_factors_report", "positive_factors_strict_valid_report"}:
         return _positive_factors_highlights(payload)
+    if report_name == "strict_pool_gap_report":
+        return _strict_pool_gap_highlights(payload)
     return {}
 
 
@@ -119,6 +122,18 @@ def _positive_factors_highlights(payload: dict[str, Any]) -> dict[str, Any]:
         "account_count": payload.get("account_count", len(account_entries)),
         "top_n": payload.get("top_n"),
         "dataset_rows": payload.get("dataset_rows", payload.get("sample_count")),
+    }
+
+
+def _strict_pool_gap_highlights(payload: dict[str, Any]) -> dict[str, Any]:
+    # 提取严格有效池覆盖缺口中的关键统计。
+    accounts = payload.get("accounts") if isinstance(payload.get("accounts"), list) else []
+    high_priority = [item for item in accounts if isinstance(item, dict) and item.get("priority") == "高"]
+    return {
+        "input_video_count": payload.get("input_video_count"),
+        "valid_video_count": payload.get("valid_video_count"),
+        "overall_retention_rate": payload.get("overall_retention_rate"),
+        "high_priority_account_count": len(high_priority),
     }
 
 

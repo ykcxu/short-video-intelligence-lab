@@ -78,6 +78,7 @@ class BuildRunSummaryTestCase(unittest.TestCase):
             payload = json.loads(json_output.read_text(encoding="utf-8"))
             self.assertIn("状态文件缺失：artifacts/analysis/positive_factors_report.json", payload["warnings"])
             self.assertIn("状态文件缺失：artifacts/analysis/positive_factors_strict_valid_report.json", payload["warnings"])
+            self.assertIn("状态文件缺失：artifacts/status/strict_pool_gap_report.json", payload["warnings"])
             self.assertEqual(payload["run_logs"]["included_file_count"], 2)
             self.assertTrue(payload["run_logs"]["has_non_empty_error_log"])
             self.assertEqual(payload["run_logs"]["non_empty_error_log_count"], 1)
@@ -96,6 +97,10 @@ class BuildRunSummaryTestCase(unittest.TestCase):
             _write_json(
                 workspace / "artifacts" / "analysis" / "positive_factors_strict_valid_report.json",
                 {"account_count": 8, "top_n": 10},
+            )
+            _write_json(
+                workspace / "artifacts" / "status" / "strict_pool_gap_report.json",
+                {"input_video_count": 10, "valid_video_count": 6, "overall_retention_rate": 0.6, "accounts": [{"priority": "高"}]},
             )
 
             custom_json = workspace / "tmp" / "run_summary.json"
@@ -125,6 +130,8 @@ class BuildRunSummaryTestCase(unittest.TestCase):
             self.assertEqual(payload["run_logs"]["included_file_count"], 0)
             self.assertEqual(payload["status_reports"]["positive_factors_report"]["highlights"]["account_count"], 9)
             self.assertEqual(payload["status_reports"]["positive_factors_strict_valid_report"]["highlights"]["account_count"], 8)
+            gap = payload["status_reports"]["strict_pool_gap_report"]["highlights"]
+            self.assertEqual(gap["high_priority_account_count"], 1)
 
 
 if __name__ == "__main__":
