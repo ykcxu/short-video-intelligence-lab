@@ -20,6 +20,7 @@ from .analysis.reporting import (
 )
 from .analysis.local_video_inputs import prepare_local_video_analysis_inputs
 from .analysis.local_video_fit import analyze_local_video_inputs_file
+from .analysis.multimodal_inputs import prepare_multimodal_inputs
 from .analysis.multimodal_fusion import analyze_multimodal_inputs_file
 from .browser.session_manager import INVALID_SESSION_CHARS
 from .config import load_config
@@ -728,6 +729,30 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     multimodal_fit_parser.set_defaults(func=_cmd_analyze_multimodal_fit)
 
+    multimodal_inputs_parser = subparsers.add_parser(
+        "prepare-multimodal-inputs",
+        help="Merge local video fit results with per-video multimodal feature JSON files.",
+    )
+    multimodal_inputs_parser.add_argument(
+        "--local-fit-artifact",
+        required=True,
+        type=Path,
+        help="Path to local video fit result JSON.",
+    )
+    multimodal_inputs_parser.add_argument(
+        "--features-dir",
+        type=Path,
+        default=None,
+        help="Directory containing per-video feature JSON files named by video_id.",
+    )
+    multimodal_inputs_parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional path to save multimodal input artifact JSON.",
+    )
+    multimodal_inputs_parser.set_defaults(func=_cmd_prepare_multimodal_inputs)
+
     return parser
 
 
@@ -1115,6 +1140,15 @@ def _cmd_analyze_multimodal_fit(orchestrator: Orchestrator, args: argparse.Names
     return analyze_multimodal_inputs_file(
         workspace=orchestrator.config.workspace,
         artifact=args.artifact,
+        output=args.output,
+    )
+
+
+def _cmd_prepare_multimodal_inputs(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    return prepare_multimodal_inputs(
+        workspace=orchestrator.config.workspace,
+        local_fit_artifact=args.local_fit_artifact,
+        features_dir=args.features_dir,
         output=args.output,
     )
 
