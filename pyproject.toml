@@ -12,6 +12,21 @@ dependencies = [
   "SQLAlchemy>=2.0",
 ]
 
+[project.optional-dependencies]
+asr = [
+  "faster-whisper>=1.0",
+]
+ocr = [
+  "easyocr>=1.7",
+]
+ocr-paddle = [
+  "paddleocr>=2.7",
+]
+multimodal = [
+  "faster-whisper>=1.0",
+  "easyocr>=1.7",
+]
+
 [project.scripts]
 short-video-intel = "short_video_intel.cli:main"
 

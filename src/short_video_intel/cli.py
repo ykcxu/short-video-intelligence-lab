@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from .analysis import reporting as reporting_module
+from .analysis.asr_features import analyze_asr_features_file
+from .analysis.ocr_features import analyze_ocr_features_file
 from .analysis.reporting import (
     analyze_positive_factors,
     build_project_progress_dashboard,
@@ -778,6 +780,28 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     script_structure_parser.set_defaults(func=_cmd_analyze_script_structure)
 
+    asr_features_parser = subparsers.add_parser(
+        "analyze-asr-features",
+        help="Extract ASR speech features from downloaded local videos.",
+    )
+    asr_features_parser.add_argument("--artifact", required=True, type=Path, help="Path to local video input artifact.")
+    asr_features_parser.add_argument("--features-dir", type=Path, default=None, help="Directory for per-video feature JSON files.")
+    asr_features_parser.add_argument("--output", type=Path, default=None, help="Optional path to save ASR feature report JSON.")
+    asr_features_parser.add_argument("--model-size", default="small", help="faster-whisper model size.")
+    asr_features_parser.add_argument("--language", default="zh", help="ASR language hint.")
+    asr_features_parser.set_defaults(func=_cmd_analyze_asr_features)
+
+    ocr_features_parser = subparsers.add_parser(
+        "analyze-ocr-features",
+        help="Extract OCR subtitle features from sampled video frames.",
+    )
+    ocr_features_parser.add_argument("--artifact", required=True, type=Path, help="Path to local video input artifact.")
+    ocr_features_parser.add_argument("--features-dir", type=Path, default=None, help="Directory for per-video feature JSON files.")
+    ocr_features_parser.add_argument("--output", type=Path, default=None, help="Optional path to save OCR feature report JSON.")
+    ocr_features_parser.add_argument("--backend", choices=("auto", "easyocr", "paddleocr"), default="auto", help="OCR backend.")
+    ocr_features_parser.add_argument("--language", default="ch_sim", help="OCR language hint.")
+    ocr_features_parser.set_defaults(func=_cmd_analyze_ocr_features)
+
     return parser
 
 
@@ -1184,6 +1208,28 @@ def _cmd_analyze_script_structure(orchestrator: Orchestrator, args: argparse.Nam
         artifact=args.artifact,
         output=args.output,
         features_dir=args.features_dir,
+    )
+
+
+def _cmd_analyze_asr_features(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    return analyze_asr_features_file(
+        workspace=orchestrator.config.workspace,
+        artifact=args.artifact,
+        output=args.output,
+        features_dir=args.features_dir,
+        model_size=args.model_size,
+        language=args.language,
+    )
+
+
+def _cmd_analyze_ocr_features(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    return analyze_ocr_features_file(
+        workspace=orchestrator.config.workspace,
+        artifact=args.artifact,
+        output=args.output,
+        features_dir=args.features_dir,
+        backend=args.backend,
+        language=args.language,
     )
 
 
