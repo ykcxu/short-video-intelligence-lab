@@ -66,7 +66,15 @@ class BuildCommentBackfillTargetsTestCase(unittest.TestCase):
             _write_comments(
                 workspace,
                 "video_comments_111.json",
-                {"video_id": "1111111111", "comments": [{"text": "已有"}]},
+                {
+                    "video_id": "1111111111",
+                    "comments": [
+                        {
+                            "text": "已有",
+                            "raw": {"response_url": "https://www-hj.douyin.com/aweme/v1/web/comment/list/"},
+                        }
+                    ],
+                },
             )
             _write_comments(
                 workspace,
@@ -143,6 +151,43 @@ class BuildCommentBackfillTargetsTestCase(unittest.TestCase):
                 output_txt.read_text(encoding="utf-8"),
                 "https://www.douyin.com/video/4444444444\nhttps://www.douyin.com/video/5555555555\n",
             )
+
+    def test_main_does_not_treat_platform_setting_text_as_completed_comments(self) -> None:
+        module = _load_tool_module()
+        with TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            _write_detail(
+                workspace,
+                "video_detail_666.json",
+                {
+                    "video_id": "6666666666",
+                    "video_url": "https://www.douyin.com/video/6666666666",
+                    "comment_count": 3,
+                },
+            )
+            _write_comments(
+                workspace,
+                "video_comments_666.json",
+                {
+                    "video_id": "6666666666",
+                    "comments": [
+                        {
+                            "content": "直播间带货榜说明",
+                            "raw": {"response_url": "https://live.douyin.com/webcast/setting/"},
+                        }
+                    ],
+                },
+            )
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = module.main(["--workspace", str(workspace)])
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["target_count"], 1)
+            self.assertTrue(payload["targets"][0]["has_comment_artifact"])
+            self.assertFalse(payload["targets"][0]["has_non_empty_comments"])
 
 
 if __name__ == "__main__":

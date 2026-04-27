@@ -6,6 +6,7 @@ from short_video_intel.collector.comment_collector import (
     _extract_comments_from_body_text,
     _extract_comments_from_response,
     _extract_comments_from_response_payload,
+    _filter_real_comment_items,
     _has_empty_comment_state,
 )
 
@@ -169,12 +170,51 @@ class CommentCollectorTestCase(unittest.TestCase):
         self.assertEqual(diagnostics["parse_failures"], 1)
         self.assertEqual(diagnostics["response_listener_failures"], 1)
 
+    def test_extract_comments_from_response_ignores_platform_setting_json(self) -> None:
+        class FakeResponse:
+            url = "https://live.douyin.com/webcast/setting/"
+
+            @staticmethod
+            def header_value(name: str) -> str:
+                return "application/json" if name == "content-type" else ""
+
+            @staticmethod
+            def json() -> dict[str, object]:
+                return {"data": {"items": [{"content": "直播间带货榜说明"}]}}
+
+        comments, warnings, diagnostics = _extract_comments_from_response(
+            FakeResponse(),
+            "https://www.douyin.com/video/7609547134546791695",
+        )
+
+        self.assertEqual(comments, [])
+        self.assertEqual(warnings, [])
+        self.assertEqual(diagnostics["parse_failures"], 0)
+
     def test_build_comment_backend_marks_network_response_source(self) -> None:
         comments = [{"content": "来自接口的评论", "raw": {"source": "network_response_json"}}]
         self.assertEqual(
             _build_comment_backend(comments=comments, stop_reason="placeholder_only"),
             "playwright:network-response-v1",
         )
+
+    def test_filter_real_comment_items_drops_platform_setting_noise(self) -> None:
+        items = [
+            {
+                "content": "直播间带货榜说明",
+                "raw": {"response_url": "https://live.douyin.com/webcast/setting/"},
+            },
+            {
+                "content": "真实评论",
+                "author_id": "user-1",
+                "raw": {"response_url": "https://www-hj.douyin.com/aweme/v1/web/comment/list/"},
+            },
+        ]
+
+        filtered = _filter_real_comment_items(items)
+
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]["content"], "真实评论")
 
 
 if __name__ == "__main__":

@@ -29,6 +29,11 @@ COMMENT_LIKE_KEYS = ("like_count", "digg_count", "likes", "like", "upvote_count"
 COMMENT_REPLY_KEYS = ("reply_count", "reply_cnt", "reply_num", "replynum", "sub_comment_count", "children_count")
 COMMENT_TIME_KEYS = ("create_time", "created_at", "update_time", "updated_at", "publish_time")
 COMMENT_AUTHOR_ID_KEYS = ("author_id", "uid", "user_id", "sec_uid", "sec_user_id")
+REAL_COMMENT_RESPONSE_PATTERNS = (
+    "/aweme/v1/web/comment/list",
+    "/aweme/v1/web/comment/publish",
+    "/aweme/v1/web/comment/list/reply",
+)
 
 
 def collect_video_comments(
@@ -306,7 +311,7 @@ def _collect_with_playwright_comments(
             },
         }
 
-    comments = _dedupe_comment_items(comments)[:20]
+    comments = _filter_real_comment_items(_dedupe_comment_items(comments))[:20]
     extraction_diagnostics["final_deduped_count"] = len(comments)
     if comments and stop_reason == "placeholder_only":
         comment_sources = {
@@ -463,6 +468,25 @@ def _dedupe_comment_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seen.add(content_hash)
         deduped.append(item)
     return deduped
+
+
+def _filter_real_comment_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """保留真实评论，过滤直播配置、无障碍文案等泛 JSON 噪声。"""
+    return [item for item in items if _is_real_comment_item(item)]
+
+
+def _is_real_comment_item(item: dict[str, Any]) -> bool:
+    """判断评论是否来自评论接口或具备真实评论作者信息。"""
+    if not isinstance(item, dict):
+        return False
+    raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
+    response_url = str(raw.get("response_url") or "").lower()
+    if any(pattern in response_url for pattern in REAL_COMMENT_RESPONSE_PATTERNS):
+        return True
+    if str(item.get("author_id") or "").strip():
+        return True
+    author_name = str(item.get("author_name") or "").strip()
+    return bool(author_name and not raw.get("stub"))
 
 
 def _normalize_comment_content(text: str) -> str:
@@ -673,6 +697,12 @@ def _map_comment_payload_node(
 def _looks_like_comment_response_url(url: str) -> bool:
     normalized_url = str(url or "").lower()
     return bool(re.search(r"(?:comment|reply|comment_list|commentlist|aweme/v\d+/.*comment)", normalized_url))
+
+
+def _looks_like_real_comment_response_url(url: str) -> bool:
+    """只允许真实评论接口进入 JSON 递归解析，避免配置接口噪声污染。"""
+    normalized_url = str(url or "").lower()
+    return any(pattern in normalized_url for pattern in REAL_COMMENT_RESPONSE_PATTERNS)
 
 
 def _payload_contains_comment_hints(payload: Any) -> bool:
@@ -945,7 +975,7 @@ def _extract_comments_from_response(
     except Exception:
         content_type = ""
 
-    if not _looks_like_comment_response_url(response_url) and "json" not in content_type:
+    if not _looks_like_real_comment_response_url(response_url):
         return [], warnings, diagnostics
 
     try:
@@ -956,7 +986,7 @@ def _extract_comments_from_response(
         warnings.append(f"comment response parse failed: {response_url or '<unknown>'}: {exc!s}")
         return [], warnings, diagnostics
 
-    if not (_looks_like_comment_response_url(response_url) or _payload_contains_comment_hints(payload)):
+    if not _payload_contains_comment_hints(payload):
         return [], warnings, diagnostics
 
     comments, payload_diag = _extract_comments_from_response_payload(payload, video_url, response_url)

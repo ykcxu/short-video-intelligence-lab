@@ -10,6 +10,11 @@ from typing import Any, Sequence
 ROOT = Path(__file__).resolve().parents[1]
 DETAIL_GLOB = "video_detail_*.json"
 COMMENTS_GLOB = "video_comments_*.json"
+REAL_COMMENT_RESPONSE_PATTERNS = (
+    "/aweme/v1/web/comment/list",
+    "/aweme/v1/web/comment/publish",
+    "/aweme/v1/web/comment/list/reply",
+)
 VIDEO_URL_TEMPLATE = "https://www.douyin.com/video/{video_id}"
 VIDEO_ID_IN_URL = re.compile(r"/video/([^/?#]+)")
 
@@ -191,14 +196,27 @@ def _extract_metric(payload: dict[str, Any], keys: list[str]) -> int:
 
 
 def _has_non_empty_comments(payload: dict[str, Any]) -> bool:
-    """识别 comments 列表是否非空。"""
+    """识别是否已有真实评论，避免平台配置文案误判为已完成。"""
     comments = payload.get("comments")
     if isinstance(comments, list):
-        return len(comments) > 0
+        return any(_is_real_comment_item(item) for item in comments)
     data = payload.get("data")
     if isinstance(data, dict) and isinstance(data.get("comments"), list):
-        return len(data["comments"]) > 0
+        return any(_is_real_comment_item(item) for item in data["comments"])
     return False
+
+
+def _is_real_comment_item(item: Any) -> bool:
+    """真实评论需来自评论接口，或至少带有作者标识。"""
+    if not isinstance(item, dict):
+        return False
+    raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
+    response_url = str(raw.get("response_url") or "").lower()
+    if any(pattern in response_url for pattern in REAL_COMMENT_RESPONSE_PATTERNS):
+        return True
+    if str(item.get("author_id") or "").strip():
+        return True
+    return bool(str(item.get("author_name") or "").strip() and not raw.get("stub"))
 
 
 def _load_json(path: Path) -> dict[str, Any]:
