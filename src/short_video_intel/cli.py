@@ -22,6 +22,7 @@ from .analysis.local_video_inputs import prepare_local_video_analysis_inputs
 from .analysis.local_video_fit import analyze_local_video_inputs_file
 from .analysis.multimodal_inputs import prepare_multimodal_inputs
 from .analysis.multimodal_fusion import analyze_multimodal_inputs_file
+from .analysis.script_structure import analyze_script_structure_file
 from .browser.session_manager import INVALID_SESSION_CHARS
 from .config import load_config
 from .orchestrator import Orchestrator
@@ -753,6 +754,30 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     multimodal_inputs_parser.set_defaults(func=_cmd_prepare_multimodal_inputs)
 
+    script_structure_parser = subparsers.add_parser(
+        "analyze-script-structure",
+        help="Extract talking-script structure features from ASR/OCR/title text.",
+    )
+    script_structure_parser.add_argument(
+        "--artifact",
+        required=True,
+        type=Path,
+        help="Path to artifact JSON containing items/results with transcript-like fields.",
+    )
+    script_structure_parser.add_argument(
+        "--features-dir",
+        type=Path,
+        default=None,
+        help="Directory to write per-video multimodal feature JSON files.",
+    )
+    script_structure_parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional path to save script structure report JSON.",
+    )
+    script_structure_parser.set_defaults(func=_cmd_analyze_script_structure)
+
     return parser
 
 
@@ -1153,11 +1178,29 @@ def _cmd_prepare_multimodal_inputs(orchestrator: Orchestrator, args: argparse.Na
     )
 
 
+def _cmd_analyze_script_structure(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    return analyze_script_structure_file(
+        workspace=orchestrator.config.workspace,
+        artifact=args.artifact,
+        output=args.output,
+        features_dir=args.features_dir,
+    )
+
+
 def _print_result(result: dict[str, Any]) -> None:
     notice = result.pop("notice", None)
     if notice:
         print(notice, file=sys.stderr)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    _write_stdout_utf8(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+
+
+def _write_stdout_utf8(text: str) -> None:
+    # 采集产物里可能包含特殊符号；Windows 默认 GBK 输出会崩溃，所以统一写 UTF-8 字节。
+    if hasattr(sys.stdout, "buffer"):
+        sys.stdout.buffer.write(text.encode("utf-8"))
+        sys.stdout.flush()
+        return
+    print(text)
 
 
 def _normalize_session_name_cli(session_name: str) -> str:
