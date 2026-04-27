@@ -81,6 +81,7 @@ class BuildRunSummaryTestCase(unittest.TestCase):
             self.assertIn("状态文件缺失：artifacts/status/strict_pool_gap_report.json", payload["warnings"])
             self.assertIn("状态文件缺失：artifacts/analysis/strict_pool_backfill_targets.json", payload["warnings"])
             self.assertIn("状态文件缺失：artifacts/status/backfill_download_status.json", payload["warnings"])
+            self.assertIn("状态文件缺失：artifacts/status/comment_backfill_status.json", payload["warnings"])
             self.assertEqual(payload["run_logs"]["included_file_count"], 2)
             self.assertTrue(payload["run_logs"]["has_non_empty_error_log"])
             self.assertEqual(payload["run_logs"]["non_empty_error_log_count"], 1)
@@ -111,6 +112,18 @@ class BuildRunSummaryTestCase(unittest.TestCase):
             _write_json(
                 workspace / "artifacts" / "status" / "backfill_download_status.json",
                 {"target_count": 2, "needs_dataset_refresh_count": 1, "accounts": [{"local_mp4_count": 3}, {"local_mp4_count": 4}]},
+            )
+            _write_json(
+                workspace / "artifacts" / "status" / "comment_backfill_status.json",
+                {
+                    "comment_artifact_count": 5,
+                    "comment_video_count": 4,
+                    "real_comment_video_count": 2,
+                    "empty_comment_video_count": 1,
+                    "noise_only_video_count": 1,
+                    "total_real_comment_count": 18,
+                    "comment_backfill_targets": {"target_count": 9, "planned_count": 6},
+                },
             )
 
             custom_json = workspace / "tmp" / "run_summary.json"
@@ -146,6 +159,20 @@ class BuildRunSummaryTestCase(unittest.TestCase):
             self.assertEqual(targets["target_count"], 2)
             download = payload["status_reports"]["backfill_download_status"]["highlights"]
             self.assertEqual(download["local_mp4_total"], 7)
+            comments = payload["status_reports"]["comment_backfill_status"]["highlights"]
+            self.assertEqual(comments["comment_artifact_count"], 5)
+            self.assertEqual(comments["comment_video_count"], 4)
+            self.assertEqual(comments["real_comment_video_count"], 2)
+            self.assertEqual(comments["empty_comment_video_count"], 1)
+            self.assertEqual(comments["noise_only_video_count"], 1)
+            self.assertEqual(comments["total_real_comment_count"], 18)
+            self.assertEqual(comments["comment_backfill_targets.target_count"], 9)
+            self.assertEqual(comments["comment_backfill_targets.planned_count"], 6)
+
+            markdown = custom_md.read_text(encoding="utf-8")
+            self.assertIn("comment_artifact_count=5", markdown)
+            self.assertIn("comment_backfill_targets.target_count=9", markdown)
+            self.assertIn("comment_backfill_targets.planned_count=6", markdown)
 
 
 if __name__ == "__main__":

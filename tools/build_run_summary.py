@@ -15,6 +15,7 @@ STATUS_FILES = {
     "strict_pool_gap_report": "artifacts/status/strict_pool_gap_report.json",
     "strict_pool_backfill_targets": "artifacts/analysis/strict_pool_backfill_targets.json",
     "backfill_download_status": "artifacts/status/backfill_download_status.json",
+    "comment_backfill_status": "artifacts/status/comment_backfill_status.json",
 }
 
 
@@ -91,6 +92,8 @@ def _build_report_highlights(report_name: str, payload: dict[str, Any]) -> dict[
         return _target_list_highlights(payload)
     if report_name == "backfill_download_status":
         return _backfill_download_highlights(payload)
+    if report_name == "comment_backfill_status":
+        return _comment_backfill_highlights(payload)
     return {}
 
 
@@ -158,6 +161,21 @@ def _backfill_download_highlights(payload: dict[str, Any]) -> dict[str, Any]:
         "target_count": payload.get("target_count"),
         "needs_dataset_refresh_count": payload.get("needs_dataset_refresh_count"),
         "local_mp4_total": local_mp4_total,
+    }
+
+
+def _comment_backfill_highlights(payload: dict[str, Any]) -> dict[str, Any]:
+    # 提取评论补采状态的核心指标，目标摘要保持嵌套便于区分来源。
+    targets = payload.get("comment_backfill_targets") if isinstance(payload.get("comment_backfill_targets"), dict) else {}
+    return {
+        "comment_artifact_count": payload.get("comment_artifact_count"),
+        "comment_video_count": payload.get("comment_video_count"),
+        "real_comment_video_count": payload.get("real_comment_video_count"),
+        "empty_comment_video_count": payload.get("empty_comment_video_count"),
+        "noise_only_video_count": payload.get("noise_only_video_count"),
+        "total_real_comment_count": payload.get("total_real_comment_count"),
+        "comment_backfill_targets.target_count": targets.get("target_count"),
+        "comment_backfill_targets.planned_count": targets.get("planned_count"),
     }
 
 

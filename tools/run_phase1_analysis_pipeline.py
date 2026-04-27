@@ -147,6 +147,19 @@ def _build_steps(workspace: Path, top_n: int, log_limit: int, skip_sqlite: bool)
             ],
         },
         {
+            "name": "build_comment_backfill_status",
+            "command": [
+                python_cmd,
+                str(tool_dir / "build_comment_backfill_status.py"),
+                "--workspace",
+                str(workspace),
+                "--output",
+                "artifacts/status/comment_backfill_status.json",
+                "--md-output",
+                "artifacts/status/comment_backfill_status.md",
+            ],
+        },
+        {
             "name": "build_run_summary",
             "command": [
                 python_cmd,
