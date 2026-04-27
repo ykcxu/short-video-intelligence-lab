@@ -6,7 +6,7 @@
 
 ## 当前状态快照
 
-- Git 最新提交：`62df757 接入评论失败诊断流水线`（本轮推进：批量评论补采入口与低覆盖账号重采准备）
+- Git 最新提交：`cd79396 支持按缺失评论产物补采`（本轮推进：快速补评论与第一版账号/视频分析）
 - 严格有效池：输入视频 `628`，严格有效 `362`，保留率 `57.64%`
 - 过滤原因：`quality_report_filtered=26`，`missing_required_assets=5`，`not_homepage_observed=133`，`detail_account_not_mentioned=89`
 - 评论补采：detail `623`，已有评论产物视频 `130`，仍需补采目标 `532`；其中无评论 artifact `493`，已有 artifact 但真实评论不足 `39`
@@ -74,8 +74,8 @@
 
 ## P3：分析层推进
 
-- [ ] P3-1 严格有效池上的账号正向因素报告复核
-  - 当前已有 `positive_factors_strict_valid_report`，但需等高优先级账号修复后再解释。
+- [x] P3-1 严格有效池上的账号正向因素报告复核
+  - 当前已有 `positive_factors_strict_valid_report`，已生成第一版分析 `docs/analysis/first_pass_account_video_analysis_20260427.md`；低覆盖账号仍需后续修复。
 - [ ] P3-2 视频适配分析接入真实账号画像
   - 输入一个视频后，按账号历史高表现内容给出适配与改进建议。
 - [ ] P3-3 视觉/话术特征 MVP
