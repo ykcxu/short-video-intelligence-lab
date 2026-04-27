@@ -91,6 +91,15 @@ class AsrFeaturesTest(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertEqual(feature["asr_speech"]["transcript"], "已有文本")
 
+    def test_extract_wav_error_uses_safe_utf8_decode(self) -> None:
+        completed = SimpleNamespace(returncode=1, stdout=b"", stderr="错误\xab".encode("utf-8"))
+
+        with patch.object(asr_features.subprocess, "run", return_value=completed):
+            with self.assertRaises(RuntimeError) as raised:
+                asr_features._extract_wav(video_path=Path("bad.mp4"), wav_path=Path("out.wav"))
+
+        self.assertIn("错误", str(raised.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

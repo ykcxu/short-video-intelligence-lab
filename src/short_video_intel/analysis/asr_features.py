@@ -123,8 +123,15 @@ def _opening_hook_score(transcript: str) -> float:
 def _extract_wav(*, video_path: Path, wav_path: Path) -> None:
     """用 ffmpeg 抽取单声道 wav，统一 Whisper 输入格式。"""
     command = ["ffmpeg", "-y", "-i", str(video_path), "-vn", "-ac", "1", "-ar", DEFAULT_SAMPLE_RATE, str(wav_path)]
-    # ffmpeg 失败时保留 stderr，便于定位视频或编解码问题。
-    subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    # Windows 默认 GBK 可能无法解码 ffmpeg 输出，统一用二进制捕获，失败时再安全解码。
+    completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if completed.returncode != 0:
+        message = _decode_process_output(completed.stderr or completed.stdout)
+        raise RuntimeError(message or f"ffmpeg failed with code {completed.returncode}")
+
+
+def _decode_process_output(value: bytes) -> str:
+    return value.decode("utf-8", errors="replace").strip()
 
 
 def _load_whisper_model_factory() -> Callable[[str], Any] | None:
