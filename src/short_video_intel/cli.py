@@ -20,6 +20,7 @@ from .analysis.reporting import (
 )
 from .analysis.local_video_inputs import prepare_local_video_analysis_inputs
 from .analysis.local_video_fit import analyze_local_video_inputs_file
+from .analysis.multimodal_fusion import analyze_multimodal_inputs_file
 from .browser.session_manager import INVALID_SESSION_CHARS
 from .config import load_config
 from .orchestrator import Orchestrator
@@ -709,6 +710,24 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     local_video_fit_parser.set_defaults(func=_cmd_analyze_local_video_fit)
 
+    multimodal_fit_parser = subparsers.add_parser(
+        "analyze-multimodal-fit",
+        help="Analyze multimodal feature artifact and produce account-fit suggestions.",
+    )
+    multimodal_fit_parser.add_argument(
+        "--artifact",
+        required=True,
+        type=Path,
+        help="Path to multimodal feature artifact JSON.",
+    )
+    multimodal_fit_parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional path to save multimodal fusion result JSON.",
+    )
+    multimodal_fit_parser.set_defaults(func=_cmd_analyze_multimodal_fit)
+
     return parser
 
 
@@ -1086,6 +1105,14 @@ def _cmd_prepare_local_video_inputs(orchestrator: Orchestrator, args: argparse.N
 
 def _cmd_analyze_local_video_fit(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
     return analyze_local_video_inputs_file(
+        workspace=orchestrator.config.workspace,
+        artifact=args.artifact,
+        output=args.output,
+    )
+
+
+def _cmd_analyze_multimodal_fit(orchestrator: Orchestrator, args: argparse.Namespace) -> dict[str, Any]:
+    return analyze_multimodal_inputs_file(
         workspace=orchestrator.config.workspace,
         artifact=args.artifact,
         output=args.output,
