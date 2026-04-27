@@ -6,7 +6,7 @@
 
 ## 当前状态快照
 
-- Git 最新提交：`8c9a50c 完善评论补采状态总览`（本轮待提交：评论失败诊断报告）
+- Git 最新提交：`62df757 接入评论失败诊断流水线`（本轮推进：批量评论补采入口与低覆盖账号重采准备）
 - 严格有效池：输入视频 `628`，严格有效 `362`，保留率 `57.64%`
 - 过滤原因：`quality_report_filtered=26`，`missing_required_assets=5`，`not_homepage_observed=133`，`detail_account_not_mentioned=89`
 - 评论补采：detail `623`，已有评论产物视频 `130`，仍需补采目标 `532`；其中无评论 artifact `493`，已有 artifact 但真实评论不足 `39`
@@ -41,8 +41,8 @@
   - 当前问题：补采下载状态显示 `希望学小学`、`紫一老师讲剑桥` 仍需刷新数据集。
   - 验收：`backfill_download_status.needs_dataset_refresh_count = 0`。
 - [ ] P0-4 评论补采继续小批次推进
-  - 当前问题：待补评论目标 `532`，且部分历史产物被噪声修复后重新进入待补。
-  - 验收：真实评论覆盖持续提升；每批结束重算 `comment_backfill_targets.json`。
+  - 当前问题：待补评论目标 `532`，其中 `493` 条没有任何评论产物；当前缺少正式批量补采入口。
+  - 验收：新增可 dry-run/可重试/可记录日志的批量补采工具；每批结束重算 `comment_backfill_targets.json`。
 - [x] P0-5 评论补采命中率诊断
   - 当前问题：修复后新跑 20 条，多数产物真实评论为 0，需要区分无评论、页面未展开、登录/风控、接口无响应。
   - 验收：已新增 `tools/build_comment_failure_diagnostics.py`，输出 `artifacts/status/comment_failure_diagnostics.{json,md}`；当前待补目标 532 条中 `missing_artifact=493`、`noise_only=33`、`empty_response=6`。
@@ -57,6 +57,9 @@
   - 加入评论待补目标、真实评论命中、最新评论批次日志。已输出到 `artifacts/status/run_summary.{json,md}`。
 - [ ] P1-4 增加 artifact 索引/最近运行历史命令
   - 验收：能快速看到最近采集批次、错误、账号覆盖。
+- [ ] P1-5 批量评论补采工具
+  - 当前问题：`crawl-video-comments` 只支持单视频，批量、limit、retry、log 依赖外层 PowerShell。
+  - 验收：新增 `tools/run_comment_backfill_batch.py`，支持 dry-run、小批次、重试、JSON 摘要和日志。
 
 ## P2：采集能力增强
 
