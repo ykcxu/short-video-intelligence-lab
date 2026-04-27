@@ -82,7 +82,14 @@ def _run_one_target(
     max_attempts = max(0, retry_limit) + 1
     while attempts < max_attempts:
         attempts += 1
-        completed = subprocess.run(command, cwd=workspace, capture_output=True, text=True)
+        completed = subprocess.run(
+            command,
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
         if completed.returncode == 0:
             break
     return _build_result(target, completed, attempts)
@@ -121,8 +128,8 @@ def _normalize_target(item: Any) -> dict[str, Any]:
 
 def _build_result(target: dict[str, Any], completed: subprocess.CompletedProcess[str] | None, attempts: int) -> dict[str, Any]:
     """把 subprocess 结果压缩成稳定摘要，避免 stdout/stderr 过大。"""
-    stdout = completed.stdout if completed is not None else ""
-    stderr = completed.stderr if completed is not None else ""
+    stdout = completed.stdout if completed is not None and completed.stdout is not None else ""
+    stderr = completed.stderr if completed is not None and completed.stderr is not None else ""
     return {
         "video_id": target["video_id"],
         "video_url": target["video_url"],

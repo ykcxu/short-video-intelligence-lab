@@ -109,6 +109,8 @@ class RunCommentBackfillBatchTestCase(unittest.TestCase):
             self.assertEqual(fake_run.call_args_list[0].kwargs["cwd"], workspace.resolve())
             self.assertTrue(fake_run.call_args_list[0].kwargs["capture_output"])
             self.assertTrue(fake_run.call_args_list[0].kwargs["text"])
+            self.assertEqual(fake_run.call_args_list[0].kwargs["encoding"], "utf-8")
+            self.assertEqual(fake_run.call_args_list[0].kwargs["errors"], "replace")
             self.assertIn("video_id=1111111111", log_output.read_text(encoding="utf-8"))
 
     def test_main_retries_failed_target_and_reports_failure(self) -> None:
@@ -135,6 +137,22 @@ class RunCommentBackfillBatchTestCase(unittest.TestCase):
             self.assertEqual(payload["results"][0]["attempts"], 2)
             self.assertEqual(payload["results"][0]["return_code"], 3)
             self.assertEqual(payload["results"][0]["video_id"], "3333333333")
+
+    def test_main_handles_none_subprocess_streams(self) -> None:
+        module = _load_tool_module()
+        with TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            _write_targets(workspace, [{"video_url": "https://www.douyin.com/video/4444444444"}])
+
+            stdout = io.StringIO()
+            with patch.object(module.subprocess, "run", return_value=FakeCompletedProcess(0, None, None)):
+                with redirect_stdout(stdout):
+                    exit_code = module.main(["--workspace", str(workspace), "--session-name", "douyin"])
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(payload["results"][0]["stdout_tail"], "")
+            self.assertEqual(payload["results"][0]["stderr_tail"], "")
 
 
 if __name__ == "__main__":
