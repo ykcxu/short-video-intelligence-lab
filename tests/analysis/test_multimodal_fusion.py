@@ -77,6 +77,20 @@ class MultimodalFusionTest(unittest.TestCase):
             self.assertEqual(result["result"]["total"], 1)
             self.assertTrue(output.exists())
 
+    def test_analyze_file_accepts_multimodal_inputs_result_items(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            artifact = workspace / "input.json"
+            artifact.write_text(
+                json.dumps({"result": {"items": [{"video_id": "v4", "local_video_fit": {"fit_score": 80}}]}}),
+                encoding="utf-8",
+            )
+
+            result = analyze_multimodal_inputs_file(workspace=workspace, artifact=artifact)
+
+            self.assertEqual(result["result"]["total"], 1)
+            self.assertEqual(result["result"]["results"][0]["video_id"], "v4")
+
 
 if __name__ == "__main__":
     unittest.main()

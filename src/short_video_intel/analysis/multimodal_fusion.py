@@ -73,7 +73,8 @@ def _extract_items(payload: Any) -> list[Mapping[str, Any]]:
     if isinstance(payload, Mapping) and isinstance(payload.get("items"), list):
         source_items = payload["items"]
     elif isinstance(payload, Mapping) and isinstance(payload.get("result"), Mapping):
-        source_items = _as_dict(payload["result"]).get("results") or []
+        result = _as_dict(payload["result"])
+        source_items = result.get("items") or result.get("results") or []
     elif isinstance(payload, list):
         source_items = payload
     else:
