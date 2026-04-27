@@ -82,6 +82,7 @@ class BuildRunSummaryTestCase(unittest.TestCase):
             self.assertIn("状态文件缺失：artifacts/analysis/strict_pool_backfill_targets.json", payload["warnings"])
             self.assertIn("状态文件缺失：artifacts/status/backfill_download_status.json", payload["warnings"])
             self.assertIn("状态文件缺失：artifacts/status/comment_backfill_status.json", payload["warnings"])
+            self.assertIn("状态文件缺失：artifacts/status/comment_failure_diagnostics.json", payload["warnings"])
             self.assertEqual(payload["run_logs"]["included_file_count"], 2)
             self.assertTrue(payload["run_logs"]["has_non_empty_error_log"])
             self.assertEqual(payload["run_logs"]["non_empty_error_log_count"], 1)
@@ -123,6 +124,13 @@ class BuildRunSummaryTestCase(unittest.TestCase):
                     "noise_only_video_count": 1,
                     "total_real_comment_count": 18,
                     "comment_backfill_targets": {"target_count": 9, "planned_count": 6},
+                },
+            )
+            _write_json(
+                workspace / "artifacts" / "status" / "comment_failure_diagnostics.json",
+                {
+                    "summary": {"video_count": 10, "hit_rate": 0.4},
+                    "status_counts": {"missing_artifact": 3, "noise_only": 2, "empty_response": 1},
                 },
             )
 
@@ -168,11 +176,19 @@ class BuildRunSummaryTestCase(unittest.TestCase):
             self.assertEqual(comments["total_real_comment_count"], 18)
             self.assertEqual(comments["comment_backfill_targets.target_count"], 9)
             self.assertEqual(comments["comment_backfill_targets.planned_count"], 6)
+            diagnostics = payload["status_reports"]["comment_failure_diagnostics"]["highlights"]
+            self.assertEqual(diagnostics["summary.video_count"], 10)
+            self.assertEqual(diagnostics["summary.hit_rate"], 0.4)
+            self.assertEqual(diagnostics["status_counts.missing_artifact"], 3)
+            self.assertEqual(diagnostics["status_counts.noise_only"], 2)
+            self.assertEqual(diagnostics["status_counts.empty_response"], 1)
 
             markdown = custom_md.read_text(encoding="utf-8")
             self.assertIn("comment_artifact_count=5", markdown)
             self.assertIn("comment_backfill_targets.target_count=9", markdown)
             self.assertIn("comment_backfill_targets.planned_count=6", markdown)
+            self.assertIn("summary.video_count=10", markdown)
+            self.assertIn("status_counts.missing_artifact=3", markdown)
 
 
 if __name__ == "__main__":

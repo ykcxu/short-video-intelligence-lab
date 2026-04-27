@@ -160,6 +160,19 @@ def _build_steps(workspace: Path, top_n: int, log_limit: int, skip_sqlite: bool)
             ],
         },
         {
+            "name": "build_comment_failure_diagnostics",
+            "command": [
+                python_cmd,
+                str(tool_dir / "build_comment_failure_diagnostics.py"),
+                "--workspace",
+                str(workspace),
+                "--output",
+                "artifacts/status/comment_failure_diagnostics.json",
+                "--md-output",
+                "artifacts/status/comment_failure_diagnostics.md",
+            ],
+        },
+        {
             "name": "build_run_summary",
             "command": [
                 python_cmd,

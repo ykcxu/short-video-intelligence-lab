@@ -83,11 +83,14 @@ class RunPhase1AnalysisPipelineToolTestCase(unittest.TestCase):
 
             fourth_args = order[3]["args"]
             comment_args = order[7]["args"]
-            summary_args = order[8]["args"]
+            diagnostics_args = order[8]["args"]
+            summary_args = order[9]["args"]
             self.assertIn("--top-n", fourth_args)
             self.assertEqual(fourth_args[fourth_args.index("--top-n") + 1], "12")
             self.assertIn("artifacts/status/comment_backfill_status.json", comment_args)
             self.assertIn("artifacts/status/comment_backfill_status.md", comment_args)
+            self.assertIn("artifacts/status/comment_failure_diagnostics.json", diagnostics_args)
+            self.assertIn("artifacts/status/comment_failure_diagnostics.md", diagnostics_args)
             self.assertIn("--log-limit", summary_args)
             self.assertEqual(summary_args[summary_args.index("--log-limit") + 1], "30")
 
@@ -144,6 +147,7 @@ class RunPhase1AnalysisPipelineToolTestCase(unittest.TestCase):
             "build_strict_pool_backfill_targets",
             "build_backfill_download_status",
             "build_comment_backfill_status",
+            "build_comment_failure_diagnostics",
             "build_run_summary",
         ]
 

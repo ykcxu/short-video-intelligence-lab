@@ -16,6 +16,7 @@ STATUS_FILES = {
     "strict_pool_backfill_targets": "artifacts/analysis/strict_pool_backfill_targets.json",
     "backfill_download_status": "artifacts/status/backfill_download_status.json",
     "comment_backfill_status": "artifacts/status/comment_backfill_status.json",
+    "comment_failure_diagnostics": "artifacts/status/comment_failure_diagnostics.json",
 }
 
 
@@ -94,6 +95,8 @@ def _build_report_highlights(report_name: str, payload: dict[str, Any]) -> dict[
         return _backfill_download_highlights(payload)
     if report_name == "comment_backfill_status":
         return _comment_backfill_highlights(payload)
+    if report_name == "comment_failure_diagnostics":
+        return _comment_failure_diagnostics_highlights(payload)
     return {}
 
 
@@ -176,6 +179,19 @@ def _comment_backfill_highlights(payload: dict[str, Any]) -> dict[str, Any]:
         "total_real_comment_count": payload.get("total_real_comment_count"),
         "comment_backfill_targets.target_count": targets.get("target_count"),
         "comment_backfill_targets.planned_count": targets.get("planned_count"),
+    }
+
+
+def _comment_failure_diagnostics_highlights(payload: dict[str, Any]) -> dict[str, Any]:
+    # 提取评论失败诊断的命中率和主要失败分类，便于一键总览快速定位问题。
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    status_counts = payload.get("status_counts") if isinstance(payload.get("status_counts"), dict) else {}
+    return {
+        "summary.video_count": summary.get("video_count"),
+        "summary.hit_rate": summary.get("hit_rate"),
+        "status_counts.missing_artifact": status_counts.get("missing_artifact"),
+        "status_counts.noise_only": status_counts.get("noise_only"),
+        "status_counts.empty_response": status_counts.get("empty_response"),
     }
 
 
