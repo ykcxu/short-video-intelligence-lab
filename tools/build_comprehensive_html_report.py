@@ -30,17 +30,23 @@ def _load_rows() -> list[dict[str, Any]]:
     """读取 362 条全量视频多模态行。"""
     module = _load_full_module()
     return module._join_rows(module._load_all_outputs(ROOT))
+def _is_suspicious_metrics(row: dict[str, Any]) -> tuple[bool, str]:
+    # 只隔离“点赞/评论很低但转发极高”的疑似解析错位；上万播放/点赞/评论本身不再判错。
+    like_count = float(row.get("like_count") or 0)
+    comment_count = float(row.get("comment_count") or 0)
+    share_count = float(row.get("share_count") or 0)
+    if share_count > METRIC_LIMIT and like_count < METRIC_LIMIT and comment_count < 50:
+        return True, "低赞低评高转发"
+    return False, ""
 def _mark_metric_quality(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """隔离超过阈值的可疑互动指标，保留视频用于核验。"""
+    """隔离低赞低评高转发的可疑互动指标，保留视频用于核验。"""
     marked = []
     for row in rows:
         copied = dict(row)
-        over = [key for key in ("like_count", "comment_count", "share_count", "view_count") if float(copied.get(key) or 0) > METRIC_LIMIT]
-        if float(copied.get("engagement_score") or 0) > METRIC_LIMIT:
-            over.append("engagement_score")
-        copied["metric_suspicious"] = bool(over)
-        copied["suspicious_reason"] = "、".join(over)
-        copied["trusted_engagement_score"] = 0 if over else copied["engagement_score"]
+        suspicious, reason = _is_suspicious_metrics(copied)
+        copied["metric_suspicious"] = suspicious
+        copied["suspicious_reason"] = reason
+        copied["trusted_engagement_score"] = 0 if suspicious else copied["engagement_score"]
         marked.append(copied)
     return marked
 def _build_analysis(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -70,7 +76,7 @@ def _render_html(analysis: dict[str, Any], rows: list[dict[str, Any]]) -> str:
     s = analysis["summary"]
     return f"""<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><title>短视频账号全量数据分析报告（可核验）</title>{_style()}</head><body><header><h1>短视频账号全量数据分析报告（可核验 HTML）</h1><p>生成时间：{_e(datetime.now().strftime('%Y-%m-%d %H:%M'))}｜点击任意视频ID可打开抖音视频页核验。</p></header><section class='cards'>{_card('全量视频', s['video_count'])}{_card('可信互动样本', s['trusted_metric_count'])}{_card('可疑指标样本', s['suspicious_metric_count'])}{_card('平均融合评分', s['average_fit_score'])}{_card('可信互动均值', s['average_trusted_engagement'])}</section>{_methodology()}{_risk_section(analysis)}{_account_section(analysis)}{_top_section(analysis)}{_video_section(rows)}{_script()}</body></html>"""
 def _methodology() -> str:
-    return """<section><h2>1. 评测依据与数据质量口径</h2><ul><li>数据来源：已登录浏览器会话采集主页、详情、评论和本地视频，不使用抖音官方接口。</li><li>互动代理分：like_count + 3*comment_count + 2*share_count；但只在可信指标样本内参与结论。</li><li>可疑规则：任一点赞/评论/转发/播放或互动代理分超过 1000，即标记为可疑，等待人工点击核验或重采。</li><li>融合评分由基础画面、人脸/出镜、姿态、人物主体、OCR字幕、ASR语音、口播结构组成。</li></ul></section>"""
+    return """<section><h2>1. 评测依据与数据质量口径</h2><ul><li>数据来源：已登录浏览器会话采集主页、详情、评论和本地视频，不使用抖音官方接口。</li><li>互动代理分：like_count + 3*comment_count + 2*share_count；但只在可信指标样本内参与结论。</li><li>可疑规则：转发超过 1000，且点赞低于 1000、评论低于 50，才标记为可疑，等待人工点击核验或重采。</li><li>融合评分由基础画面、人脸/出镜、姿态、人物主体、OCR字幕、ASR语音、口播结构组成。</li></ul></section>"""
 def _risk_section(analysis: dict[str, Any]) -> str:
     risks = "".join(f"<tr><td>{_e(k)}</td><td>{v}</td></tr>" for k,v in analysis["risks"].items())
     return f"<section><h2>2. 全量制作侧风险</h2><table><thead><tr><th>风险</th><th>数量</th></tr></thead><tbody>{risks}</tbody></table></section>"

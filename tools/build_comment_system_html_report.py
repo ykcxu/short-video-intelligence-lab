@@ -29,16 +29,22 @@ def _load_module():
 def _load_rows() -> list[dict[str, Any]]:
     module = _load_module()
     return module._join_rows(module._load_all_outputs(ROOT))
+def _is_suspicious_metrics(row: dict[str, Any]) -> tuple[bool, str]:
+    # 只隔离“点赞/评论很低但转发极高”的疑似解析错位；上万播放/点赞/评论本身不再判错。
+    like_count = float(row.get("like_count") or 0)
+    comment_count = float(row.get("comment_count") or 0)
+    share_count = float(row.get("share_count") or 0)
+    if share_count > METRIC_LIMIT and like_count < METRIC_LIMIT and comment_count < 50:
+        return True, "低赞低评高转发"
+    return False, ""
 def _mark_quality(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     marked = []
     for row in rows:
         item = dict(row)
-        over = [k for k in ("like_count", "comment_count", "share_count", "view_count") if float(item.get(k) or 0) > METRIC_LIMIT]
-        if float(item.get("engagement_score") or 0) > METRIC_LIMIT:
-            over.append("engagement_score")
-        item["metric_suspicious"] = bool(over)
-        item["trusted_engagement_score"] = 0 if over else item.get("engagement_score", 0)
-        item["suspicious_reason"] = "、".join(over)
+        suspicious, reason = _is_suspicious_metrics(item)
+        item["metric_suspicious"] = suspicious
+        item["trusted_engagement_score"] = 0 if suspicious else item.get("engagement_score", 0)
+        item["suspicious_reason"] = reason
         marked.append(item)
     return marked
 def _load_comments(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -118,7 +124,7 @@ def _render(a: dict[str, Any], rows: list[dict[str, Any]], comments: list[dict[s
     s = a["summary"]
     return f"<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><title>评论系统分析报告</title>{_style()}</head><body><header><h1>短视频评论系统分析报告</h1><p>生成时间：{_e(datetime.now().strftime('%Y-%m-%d %H:%M'))}｜点击视频ID打开抖音核验</p></header><section class='cards'>{_card('全量视频',s['video_count'])}{_card('已采评论',s['comment_count'])}{_card('有评论视频',s['videos_with_comments'])}{_card('作者回复',s['author_reply_count'])}{_card('咨询评论',s['question_comment_count'])}</section>{_method()}{_topic_section(a)}{_account_section(a)}{_opportunity_section(a)}{_video_section(a)}{_comment_table(comments)}{_script()}</body></html>"
 def _method() -> str:
-    return "<section><h2>1. 分析口径</h2><ul><li>互动指标继续隔离超过1000的可疑值；评论分析独立使用已采集评论文本。</li><li>评论被划分为资料领取、考试报考、家长咨询、难度质疑、方法追问、正向反馈、情绪共鸣等主题。</li><li>教育账号分析重点不是评论数量，而是评论暴露出的需求、质疑、转化入口和二次选题。</li></ul></section>"
+    return "<section><h2>1. 分析口径</h2><ul><li>互动指标只隔离低赞低评高转发的疑似错位样本；评论分析独立使用已采集评论文本。</li><li>评论被划分为资料领取、考试报考、家长咨询、难度质疑、方法追问、正向反馈、情绪共鸣等主题。</li><li>教育账号分析重点不是评论数量，而是评论暴露出的需求、质疑、转化入口和二次选题。</li></ul></section>"
 def _topic_section(a: dict[str, Any]) -> str:
     rows = ''.join(f"<tr><td>{_e(k)}</td><td>{v}</td></tr>" for k,v in a['topics'])
     sent = ''.join(f"<tr><td>{_e(k)}</td><td>{v}</td></tr>" for k,v in a['sentiments'])

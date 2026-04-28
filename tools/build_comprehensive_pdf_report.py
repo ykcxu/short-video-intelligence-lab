@@ -17,7 +17,7 @@ from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "output" / "pdf"
 TMP_DIR = ROOT / "tmp" / "pdfs"
-PDF_PATH = OUT_DIR / "20260428_短视频账号全量数据分析报告_修正版.pdf"
+PDF_PATH = OUT_DIR / "20260428_短视频账号全量数据分析报告_修正版_低赞低评高转发.pdf"
 AUDIT_PATH = OUT_DIR / "20260428_异常互动指标核查.csv"
 PREVIEW_PATH = TMP_DIR / "20260428_短视频账号全量数据分析报告_page1.png"
 FONT_PATH = Path(r"C:\Windows\Fonts\msyh.ttc")
@@ -45,13 +45,21 @@ def _load_full_module():
 def _load_rows() -> list[dict[str, Any]]:
     module = _load_full_module()
     return module._join_rows(module._load_all_outputs(ROOT))
+def _is_suspicious_metrics(row: dict[str, Any]) -> tuple[bool, str]:
+    # 只隔离“点赞/评论很低但转发极高”的疑似解析错位；上万播放/点赞/评论本身不再判错。
+    like_count = float(row.get("like_count") or 0)
+    comment_count = float(row.get("comment_count") or 0)
+    share_count = float(row.get("share_count") or 0)
+    if share_count > METRIC_LIMIT and like_count < METRIC_LIMIT and comment_count < 50:
+        return True, "低赞低评高转发"
+    return False, ""
 def _mark_metric_quality(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     marked = []
     for row in rows:
         copied = dict(row)
-        over_fields = [key for key in ("like_count", "comment_count", "share_count", "view_count") if float(copied.get(key) or 0) > METRIC_LIMIT]
-        copied["metric_suspicious"] = bool(over_fields) or float(copied.get("engagement_score") or 0) > METRIC_LIMIT
-        copied["suspicious_reason"] = "、".join(over_fields + (["engagement_score"] if float(copied.get("engagement_score") or 0) > METRIC_LIMIT else []))
+        suspicious, reason = _is_suspicious_metrics(copied)
+        copied["metric_suspicious"] = suspicious
+        copied["suspicious_reason"] = reason
         copied["trusted_engagement_score"] = 0 if copied["metric_suspicious"] else copied["engagement_score"]
         marked.append(copied)
     return marked
@@ -92,15 +100,15 @@ def _build_story(analysis: dict[str, Any], rows: list[dict[str, Any]]) -> list[A
     return story
 def _cover(styles: dict[str, ParagraphStyle], analysis: dict[str, Any]) -> list[Any]:
     s = analysis["summary"]
-    return [Spacer(1, 18*mm), Paragraph("短视频账号全量数据分析报告（修正版）", styles["title"]), Spacer(1, 7*mm), Paragraph("已隔离超过 1000 的可疑互动指标", styles["subtitle"]), Spacer(1, 12*mm), _kv_table([["生成时间", datetime.now().strftime("%Y-%m-%d %H:%M")], ["覆盖视频", f"{s['video_count']} 条"], ["可信互动样本", f"{s['trusted_metric_count']} 条"], ["可疑指标样本", f"{s['suspicious_metric_count']} 条"], ["平均融合评分", s["average_fit_score"]]]), Spacer(1, 10*mm), Paragraph("核心结论", styles["h1"]), *_bullet(styles, ["上一版报告把详情页连续数字直接纳入互动分析，其中超过 1000 的指标存在明显误匹配风险。", f"本版采用保守口径：任一点赞/评论/转发/播放或互动代理分超过 {METRIC_LIMIT} 即标记为可疑。", "所有视频仍保留多模态评价；涉及播放、评论、点赞、转发的结论只使用可信互动样本。"]), PageBreak()]
+    return [Spacer(1, 18*mm), Paragraph("短视频账号全量数据分析报告（修正版）", styles["title"]), Spacer(1, 7*mm), Paragraph("已隔离低赞低评高转发的可疑互动指标", styles["subtitle"]), Spacer(1, 12*mm), _kv_table([["生成时间", datetime.now().strftime("%Y-%m-%d %H:%M")], ["覆盖视频", f"{s['video_count']} 条"], ["可信互动样本", f"{s['trusted_metric_count']} 条"], ["可疑指标样本", f"{s['suspicious_metric_count']} 条"], ["平均融合评分", s["average_fit_score"]]]), Spacer(1, 10*mm), Paragraph("核心结论", styles["h1"]), *_bullet(styles, ["上万播放、点赞、评论本身可能是真实数据，不再一刀切标错。", f"本版采用业务口径：转发超过 {METRIC_LIMIT}，且点赞低于 {METRIC_LIMIT}、评论低于 50 时，才标记为可疑。", "所有视频仍保留多模态评价；涉及播放、评论、点赞、转发的结论只使用可信互动样本。"]), PageBreak()]
 def _methodology(styles: dict[str, ParagraphStyle]) -> list[Any]:
     weights = [["组件", "权重", "依据"], ["基础画面", "16%", "竖屏、时长、亮度、对比度、字幕区域"], ["人脸/出镜", "16%", "人脸命中、居中、清晰度、表情、遮挡"], ["姿态", "12%", "正向镜头、上半身、手势、稳定度"], ["人物主体", "12%", "人数、主体占比、居中、背景杂乱度"], ["OCR 字幕", "14%", "字幕覆盖、可读性、关键词、一致性"], ["ASR 语音", "14%", "语速、停顿、开场钩子"], ["口播结构", "16%", "钩子、痛点、方法、例子、行动召唤"]]
-    return [Paragraph("1. 我们如何评测视频", styles["h1"]), *_bullet(styles, ["数据来源：已登录浏览器会话采集主页、详情、评论和本地视频，不使用抖音官方接口。", "互动代理分公式仍为 like_count + 3*comment_count + 2*share_count，但只在可信指标样本内使用。", "超过阈值的指标不直接删除，而是在明细表标记为“可疑”，便于后续人工复核或重采。", "融合评分 0-100 分：75 以上 high，55-74 medium，55 以下 low。", "不输出不可解释的颜值绝对分，统一转成出镜质量、居中、清晰度和表情积极度。"]), Spacer(1,4*mm), _small_table(weights, [34,18,170]), PageBreak()]
+    return [Paragraph("1. 我们如何评测视频", styles["h1"]), *_bullet(styles, ["数据来源：已登录浏览器会话采集主页、详情、评论和本地视频，不使用抖音官方接口。", "互动代理分公式仍为 like_count + 3*comment_count + 2*share_count，但只在可信指标样本内使用。", "低赞低评高转发的疑似错位指标不直接删除，而是在明细表标记为“可疑”，便于后续人工复核或重采。", "融合评分 0-100 分：75 以上 high，55-74 medium，55 以下 low。", "不输出不可解释的颜值绝对分，统一转成出镜质量、居中、清晰度和表情积极度。"]), Spacer(1,4*mm), _small_table(weights, [34,18,170]), PageBreak()]
 def _overall_section(styles: dict[str, ParagraphStyle], analysis: dict[str, Any]) -> list[Any]:
     s, o = analysis["summary"], analysis["overall"]
     rows = [["指标", "数值"], ["全量视频", s["video_count"]], ["可信互动样本", s["trusted_metric_count"]], ["可疑互动样本", s["suspicious_metric_count"]], ["可信互动均值", s["average_trusted_engagement"]], ["高低互动融合分差", o["trusted_gap"]["fit_score_gap"]], ["高低互动评论差", o["trusted_gap"]["comment_gap"]], ["高低互动话术差", o["trusted_gap"]["structure_gap"]]]
     risks = o["risk_counts"]
-    return [Paragraph("2. 全量视频综合评价", styles["h1"]), *_bullet(styles, [f"本次全量多模态覆盖 {s['video_count']} 条视频，其中 {s['trusted_metric_count']} 条互动指标可信，{s['suspicious_metric_count']} 条互动指标需复核。", f"制作侧主要风险：主体不稳 {risks['主体不稳']} 条、话术弱 {risks['话术弱']} 条、字幕弱 {risks['字幕弱']} 条、语速快 {risks['语速快']} 条。", "修正后，互动结论不再受 5万、32.2万、111.3万 等异常解析值影响。"]), Spacer(1,4*mm), _small_table(rows, [55,55]), PageBreak()]
+    return [Paragraph("2. 全量视频综合评价", styles["h1"]), *_bullet(styles, [f"本次全量多模态覆盖 {s['video_count']} 条视频，其中 {s['trusted_metric_count']} 条互动指标可信，{s['suspicious_metric_count']} 条互动指标需复核。", f"制作侧主要风险：主体不稳 {risks['主体不稳']} 条、话术弱 {risks['话术弱']} 条、字幕弱 {risks['字幕弱']} 条、语速快 {risks['语速快']} 条。", "修正后，上万点赞/评论不再被直接判错；重点隔离低赞低评但转发异常高的样本。"]), Spacer(1,4*mm), _small_table(rows, [55,55]), PageBreak()]
 def _account_section(styles: dict[str, ParagraphStyle], analysis: dict[str, Any]) -> list[Any]:
     rows = [["主页", "视频", "可信", "可疑", "融合", "可信互动均值", "话术", "主体", "主要建议"]]
     for item in analysis["accounts"]:
