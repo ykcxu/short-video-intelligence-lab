@@ -36,6 +36,21 @@ class SecondRoundToolsTestCase(unittest.TestCase):
         self.assertTrue(any("字幕一致性" in item for item in tips))
         self.assertTrue(any("多主体" in item for item in tips))
 
+    def test_full_batch_status_summarizes_chunks(self) -> None:
+        module = _load_module("run_multimodal_full_batch", "run_multimodal_full_batch.py")
+        chunks = [{"index": 1, "count": 2}, {"index": 2, "count": 1}]
+        results = [
+            {"index": 1, "count": 2, "return_code": 0},
+            {"index": 2, "count": 1, "return_code": 124},
+        ]
+
+        status = module._build_status(Path("w"), [], chunks, results)
+
+        self.assertEqual(status["chunk_count"], 2)
+        self.assertEqual(status["completed_chunk_count"], 1)
+        self.assertEqual(status["failed_count"], 1)
+        self.assertEqual(status["processed_video_count"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
