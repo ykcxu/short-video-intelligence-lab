@@ -15,6 +15,7 @@ env/
 build/
 dist/
 *.egg-info/
+deliverables/
 
 # IDE
 .vscode/
@@ -28,6 +29,7 @@ Thumbs.db
 data/
 artifacts/
 downloads/
+output/
 *.sqlite3
 *.db
 
