@@ -25,6 +25,10 @@ ocr-paddle = [
 multimodal = [
   "faster-whisper>=1.0",
   "easyocr>=1.7",
+  "opencv-contrib-python>=4.13",
+]
+vision-person = [
+  "opencv-contrib-python>=4.13",
 ]
 
 [project.scripts]
