@@ -1,0 +1,557 @@
+{
+  "generated_at": "2026-04-28T11:03:03.760715+00:00",
+  "run_id": "20260428_full_multimodal",
+  "status": {
+    "ok": true,
+    "total_video_count": 362,
+    "chunk_count": 23,
+    "completed_chunk_count": 23,
+    "failed_count": 0,
+    "processed_video_count": 362
+  },
+  "sample_summary": {
+    "video_count": 362,
+    "account_count": 8,
+    "average_fit_score": 67.57,
+    "fit_level_distribution": {
+      "medium": 346,
+      "high": 12,
+      "low": 4
+    },
+    "average_speech_rate_cpm": 253.67,
+    "average_ocr_coverage": 0.996,
+    "average_structure_completeness": 0.198,
+    "face_detected_count": 354,
+    "pose_detected_count": 359
+  },
+  "overall_findings": {
+    "high_vs_low": {
+      "fit_score_gap": 1.11,
+      "ocr_readability_gap": 0.026,
+      "face_center_score_gap": 0.015,
+      "structure_completeness_gap": -0.02,
+      "speech_rate_cpm_gap": -14.714,
+      "subtitle_consistency_gap": -0.04
+    },
+    "risk_counts": {
+      "multi_person_or_unstable_subject": 328,
+      "low_structure": 263,
+      "low_subtitle_consistency": 269,
+      "face_small_or_offcenter": 139,
+      "speech_too_fast": 24
+    },
+    "correlation_hint": {
+      "fit_score": -0.08,
+      "ocr_readability": 0.034,
+      "structure_completeness": -0.029,
+      "face_center_score": 0.022,
+      "subtitle_consistency": 0.011
+    }
+  },
+  "account_findings": [
+    {
+      "account": "关关讲小学语文",
+      "video_count": 56,
+      "average_fit_score": 70.86,
+      "average_engagement_score": 4445.54,
+      "average_ocr_readability": 0.85,
+      "average_structure_completeness": 0.193,
+      "average_person_count": 5.95,
+      "risk_counts": {
+        "multi_person_or_unstable_subject": 55,
+        "low_structure": 45,
+        "low_subtitle_consistency": 50,
+        "face_small_or_offcenter": 5,
+        "speech_too_fast": 0
+      },
+      "recommendations": [
+        "强化口播结构：开头钩子、痛点、方法、例子、结尾提问要更完整。",
+        "统一字幕风格：关键词位置、字体层级和节奏保持一致。",
+        "降低多主体干扰：知识讲解尽量突出单一老师或单一视觉焦点。"
+      ]
+    },
+    {
+      "account": "原学而思小学规划（希望学）",
+      "video_count": 73,
+      "average_fit_score": 66.23,
+      "average_engagement_score": 835.33,
+      "average_ocr_readability": 0.832,
+      "average_structure_completeness": 0.195,
+      "average_person_count": 4.14,
+      "risk_counts": {
+        "multi_person_or_unstable_subject": 64,
+        "low_structure": 50,
+        "low_subtitle_consistency": 50,
+        "face_small_or_offcenter": 49,
+        "speech_too_fast": 0
+      },
+      "recommendations": [
+        "强化口播结构：开头钩子、痛点、方法、例子、结尾提问要更完整。",
+        "统一字幕风格：关键词位置、字体层级和节奏保持一致。",
+        "降低多主体干扰：知识讲解尽量突出单一老师或单一视觉焦点。",
+        "优化人物居中和脸部清晰度，增强账号记忆点。"
+      ]
+    },
+    {
+      "account": "子琦老师讲语文",
+      "video_count": 51,
+      "average_fit_score": 68.16,
+      "average_engagement_score": 75897.29,
+      "average_ocr_readability": 0.84,
+      "average_structure_completeness": 0.294,
+      "average_person_count": 4.33,
+      "risk_counts": {
+        "multi_person_or_unstable_subject": 48,
+        "low_structure": 28,
+        "low_subtitle_consistency": 50,
+        "face_small_or_offcenter": 9,
+        "speech_too_fast": 0
+      },
+      "recommendations": [
+        "强化口播结构：开头钩子、痛点、方法、例子、结尾提问要更完整。",
+        "统一字幕风格：关键词位置、字体层级和节奏保持一致。",
+        "降低多主体干扰：知识讲解尽量突出单一老师或单一视觉焦点。",
+        "优化人物居中和脸部清晰度，增强账号记忆点。"
+      ]
+    },
+    {
+      "account": "希望学小学英语@航航老师",
+      "video_count": 38,
+      "average_fit_score": 65.84,
+      "average_engagement_score": 118268.32,
+      "average_ocr_readability": 0.722,
+      "average_structure_completeness": 0.063,
+      "average_person_count": 5.17,
+      "risk_counts": {
+        "multi_person_or_unstable_subject": 37,
+        "low_structure": 37,
+        "low_subtitle_consistency": 18,
+        "face_small_or_offcenter": 11,
+        "speech_too_fast": 11
+      },
+      "recommendations": [
+        "强化口播结构：开头钩子、痛点、方法、例子、结尾提问要更完整。",
+        "统一字幕风格：关键词位置、字体层级和节奏保持一致。",
+        "降低多主体干扰：知识讲解尽量突出单一老师或单一视觉焦点。"
+      ]
+    },
+    {
+      "account": "希望学英语@哈佛小哈老师",
+      "video_count": 38,
+      "average_fit_score": 65.45,
+      "average_engagement_score": 3449.13,
+      "average_ocr_readability": 0.719,
+      "average_structure_completeness": 0.111,
+      "average_person_count": 4.26,
+      "risk_counts": {
+        "multi_person_or_unstable_subject": 38,
+        "low_structure": 33,
+        "low_subtitle_consistency": 32,
+        "face_small_or_offcenter": 16,
+        "speech_too_fast": 10
+      },
+      "recommendations": [
+        "强化口播结构：开头钩子、痛点、方法、例子、结尾提问要更完整。",
+        "统一字幕风格：关键词位置、字体层级和节奏保持一致。",
+        "降低多主体干扰：知识讲解尽量突出单一老师或单一视觉焦点。",
+        "优化人物居中和脸部清晰度，增强账号记忆点。"
+      ]
+    },
+    {
+      "account": "紫一剑桥英语",
+      "video_count": 22,
+      "average_fit_score": 67.95,
+      "average_engagement_score": 160.27,
+      "average_ocr_readability": 0.774,
+      "average_structure_completeness": 0.155,
+      "average_person_count": 5.12,
+      "risk_counts": {
+        "multi_person_or_unstable_subject": 20,
+        "low_structure": 18,
+        "low_subtitle_consistency": 16,
+        "face_small_or_offcenter": 3,
+        "speech_too_fast": 0
+      },
+      "recommendations": [
+        "强化口播结构：开头钩子、痛点、方法、例子、结尾提问要更完整。",
+        "统一字幕风格：关键词位置、字体层级和节奏保持一致。",
+        "降低多主体干扰：知识讲解尽量突出单一老师或单一视觉焦点。",
+        "优化人物居中和脸部清晰度，增强账号记忆点。"
+      ]
+    },
+    {
+      "account": "紫一老师讲剑桥",
+      "video_count": 18,
+      "average_fit_score": 70.56,
+      "average_engagement_score": 52246.78,
+      "average_ocr_readability": 0.893,
+      "average_structure_completeness": 0.189,
+      "average_person_count": 3.67,
+      "risk_counts": {
+        "multi_person_or_unstable_subject": 15,
+        "low_structure": 15,
+        "low_subtitle_consistency": 14,
+        "face_small_or_offcenter": 6,
+        "speech_too_fast": 3
+      },
+      "recommendations": [
+        "强化口播结构：开头钩子、痛点、方法、例子、结尾提问要更完整。",
+        "统一字幕风格：关键词位置、字体层级和节奏保持一致。",
+        "降低多主体干扰：知识讲解尽量突出单一老师或单一视觉焦点。",
+        "适当降低语速并增加停顿，方便学生和家长跟上知识点。"
+      ]
+    },
+    {
+      "account": "老尼讲语文",
+      "video_count": 66,
+      "average_fit_score": 67.06,
+      "average_engagement_score": 9555.47,
+      "average_ocr_readability": 0.83,
+      "average_structure_completeness": 0.276,
+      "average_person_count": 4.6,
+      "risk_counts": {
+        "multi_person_or_unstable_subject": 51,
+        "low_structure": 37,
+        "low_subtitle_consistency": 39,
+        "face_small_or_offcenter": 40,
+        "speech_too_fast": 0
+      },
+      "recommendations": [
+        "强化口播结构：开头钩子、痛点、方法、例子、结尾提问要更完整。",
+        "统一字幕风格：关键词位置、字体层级和节奏保持一致。",
+        "降低多主体干扰：知识讲解尽量突出单一老师或单一视觉焦点。",
+        "优化人物居中和脸部清晰度，增强账号记忆点。"
+      ]
+    }
+  ],
+  "top_fit_examples": [
+    {
+      "video_id": "7618893739330735375",
+      "source_name": "关关讲小学语文",
+      "video_url": "https://www.douyin.com/video/7618893739330735375",
+      "fit_score": 78.0,
+      "engagement_score": 190.0,
+      "comment_count": 7.0
+    },
+    {
+      "video_id": "7610726542573915402",
+      "source_name": "关关讲小学语文",
+      "video_url": "https://www.douyin.com/video/7610726542573915402",
+      "fit_score": 76.0,
+      "engagement_score": 281.0,
+      "comment_count": 12.0
+    },
+    {
+      "video_id": "7610629712456600842",
+      "source_name": "关关讲小学语文",
+      "video_url": "https://www.douyin.com/video/7610629712456600842",
+      "fit_score": 75.0,
+      "engagement_score": 168.0,
+      "comment_count": 10.0
+    },
+    {
+      "video_id": "7616678443710745891",
+      "source_name": "关关讲小学语文",
+      "video_url": "https://www.douyin.com/video/7616678443710745891",
+      "fit_score": 75.0,
+      "engagement_score": 121.0,
+      "comment_count": 4.0
+    },
+    {
+      "video_id": "7628902056421543203",
+      "source_name": "关关讲小学语文",
+      "video_url": "https://www.douyin.com/video/7628902056421543203",
+      "fit_score": 75.0,
+      "engagement_score": 98.0,
+      "comment_count": 3.0
+    },
+    {
+      "video_id": "7610723048647413032",
+      "source_name": "关关讲小学语文",
+      "video_url": "https://www.douyin.com/video/7610723048647413032",
+      "fit_score": 75.0,
+      "engagement_score": 66.0,
+      "comment_count": 4.0
+    },
+    {
+      "video_id": "7603574050488634651",
+      "source_name": "原学而思小学规划（希望学）",
+      "video_url": "https://www.douyin.com/video/7603574050488634651",
+      "fit_score": 75.0,
+      "engagement_score": 33.0,
+      "comment_count": 3.0
+    },
+    {
+      "video_id": "7613292904898923830",
+      "source_name": "原学而思小学规划（希望学）",
+      "video_url": "https://www.douyin.com/video/7613292904898923830",
+      "fit_score": 75.0,
+      "engagement_score": 8.0,
+      "comment_count": 0.0
+    },
+    {
+      "video_id": "7626672828275838258",
+      "source_name": "子琦老师讲语文",
+      "video_url": "https://www.douyin.com/video/7626672828275838258",
+      "fit_score": 75.0,
+      "engagement_score": 36.0,
+      "comment_count": 2.0
+    },
+    {
+      "video_id": "7626574976102960422",
+      "source_name": "希望学英语@哈佛小哈老师",
+      "video_url": "https://www.douyin.com/video/7626574976102960422",
+      "fit_score": 75.0,
+      "engagement_score": 78.0,
+      "comment_count": 3.0
+    },
+    {
+      "video_id": "7621500647808044330",
+      "source_name": "老尼讲语文",
+      "video_url": "https://www.douyin.com/video/7621500647808044330",
+      "fit_score": 75.0,
+      "engagement_score": 64.0,
+      "comment_count": 6.0
+    },
+    {
+      "video_id": "7628157324573625609",
+      "source_name": "老尼讲语文",
+      "video_url": "https://www.douyin.com/video/7628157324573625609",
+      "fit_score": 75.0,
+      "engagement_score": 21.0,
+      "comment_count": 1.0
+    },
+    {
+      "video_id": "7621481499094830371",
+      "source_name": "关关讲小学语文",
+      "video_url": "https://www.douyin.com/video/7621481499094830371",
+      "fit_score": 74.0,
+      "engagement_score": 1103.0,
+      "comment_count": 13.0
+    },
+    {
+      "video_id": "7618895883756719375",
+      "source_name": "关关讲小学语文",
+      "video_url": "https://www.douyin.com/video/7618895883756719375",
+      "fit_score": 74.0,
+      "engagement_score": 752.0,
+      "comment_count": 12.0
+    },
+    {
+      "video_id": "7606179563453910278",
+      "source_name": "关关讲小学语文",
+      "video_url": "https://www.douyin.com/video/7606179563453910278",
+      "fit_score": 74.0,
+      "engagement_score": 365.0,
+      "comment_count": 27.0
+    },
+    {
+      "video_id": "7621484047516175651",
+      "source_name": "关关讲小学语文",
+      "video_url": "https://www.douyin.com/video/7621484047516175651",
+      "fit_score": 74.0,
+      "engagement_score": 365.0,
+      "comment_count": 9.0
+    },
+    {
+      "video_id": "7605447647788289320",
+      "source_name": "关关讲小学语文",
+      "video_url": "https://www.douyin.com/video/7605447647788289320",
+      "fit_score": 74.0,
+      "engagement_score": 68.0,
+      "comment_count": 5.0
+    },
+    {
+      "video_id": "7610712202441706752",
+      "source_name": "原学而思小学规划（希望学）",
+      "video_url": "https://www.douyin.com/video/7610712202441706752",
+      "fit_score": 74.0,
+      "engagement_score": 21.0,
+      "comment_count": 1.0
+    },
+    {
+      "video_id": "7624082112236293426",
+      "source_name": "子琦老师讲语文",
+      "video_url": "https://www.douyin.com/video/7624082112236293426",
+      "fit_score": 74.0,
+      "engagement_score": 419.0,
+      "comment_count": 27.0
+    },
+    {
+      "video_id": "7610999217284287794",
+      "source_name": "子琦老师讲语文",
+      "video_url": "https://www.douyin.com/video/7610999217284287794",
+      "fit_score": 74.0,
+      "engagement_score": 330.0,
+      "comment_count": 13.0
+    }
+  ],
+  "top_engagement_examples": [
+    {
+      "video_id": "7618904356183657743",
+      "source_name": "希望学小学英语@航航老师",
+      "video_url": "https://www.douyin.com/video/7618904356183657743",
+      "fit_score": 61.0,
+      "engagement_score": 2226018.0,
+      "comment_count": 1.0
+    },
+    {
+      "video_id": "7454540261251747130",
+      "source_name": "希望学小学英语@航航老师",
+      "video_url": "https://www.douyin.com/video/7454540261251747130",
+      "fit_score": 62.0,
+      "engagement_score": 2226010.0,
+      "comment_count": 1.0
+    },
+    {
+      "video_id": "7562017180125007139",
+      "source_name": "子琦老师讲语文",
+      "video_url": "https://www.douyin.com/video/7562017180125007139",
+      "fit_score": 65.0,
+      "engagement_score": 1288064.0,
+      "comment_count": 322000.0
+    },
+    {
+      "video_id": "7563618838042938658",
+      "source_name": "子琦老师讲语文",
+      "video_url": "https://www.douyin.com/video/7563618838042938658",
+      "fit_score": 73.0,
+      "engagement_score": 1288030.0,
+      "comment_count": 322000.0
+    },
+    {
+      "video_id": "7629670575169965354",
+      "source_name": "子琦老师讲语文",
+      "video_url": "https://www.douyin.com/video/7629670575169965354",
+      "fit_score": 65.0,
+      "engagement_score": 1288020.0,
+      "comment_count": 322000.0
+    },
+    {
+      "video_id": "7604746875190742306",
+      "source_name": "紫一老师讲剑桥",
+      "video_url": "https://www.douyin.com/video/7604746875190742306",
+      "fit_score": 74.0,
+      "engagement_score": 358005.0,
+      "comment_count": 1.0
+    },
+    {
+      "video_id": "7441574817381338426",
+      "source_name": "老尼讲语文",
+      "video_url": "https://www.douyin.com/video/7441574817381338426",
+      "fit_score": 56.0,
+      "engagement_score": 346014.0,
+      "comment_count": 0.0
+    },
+    {
+      "video_id": "7529497065858436387",
+      "source_name": "关关讲小学语文",
+      "video_url": "https://www.douyin.com/video/7529497065858436387",
+      "fit_score": 68.0,
+      "engagement_score": 135686.0,
+      "comment_count": 562.0
+    },
+    {
+      "video_id": "7177270559003266363",
+      "source_name": "希望学英语@哈佛小哈老师",
+      "video_url": "https://www.douyin.com/video/7177270559003266363",
+      "fit_score": 68.0,
+      "engagement_score": 126208.0,
+      "comment_count": 10000.0
+    },
+    {
+      "video_id": "7603040655950056731",
+      "source_name": "紫一老师讲剑桥",
+      "video_url": "https://www.douyin.com/video/7603040655950056731",
+      "fit_score": 71.0,
+      "engagement_score": 114001.0,
+      "comment_count": 0.0
+    },
+    {
+      "video_id": "7603041691007864079",
+      "source_name": "紫一老师讲剑桥",
+      "video_url": "https://www.douyin.com/video/7603041691007864079",
+      "fit_score": 67.0,
+      "engagement_score": 92004.0,
+      "comment_count": 1.0
+    },
+    {
+      "video_id": "7604752969820638504",
+      "source_name": "紫一老师讲剑桥",
+      "video_url": "https://www.douyin.com/video/7604752969820638504",
+      "fit_score": 68.0,
+      "engagement_score": 90001.0,
+      "comment_count": 0.0
+    },
+    {
+      "video_id": "7604745127566789923",
+      "source_name": "紫一老师讲剑桥",
+      "video_url": "https://www.douyin.com/video/7604745127566789923",
+      "fit_score": 73.0,
+      "engagement_score": 76001.0,
+      "comment_count": 0.0
+    },
+    {
+      "video_id": "7604751321136123176",
+      "source_name": "紫一老师讲剑桥",
+      "video_url": "https://www.douyin.com/video/7604751321136123176",
+      "fit_score": 70.0,
+      "engagement_score": 76001.0,
+      "comment_count": 0.0
+    },
+    {
+      "video_id": "7604754049392463110",
+      "source_name": "紫一老师讲剑桥",
+      "video_url": "https://www.douyin.com/video/7604754049392463110",
+      "fit_score": 74.0,
+      "engagement_score": 72001.0,
+      "comment_count": 0.0
+    },
+    {
+      "video_id": "7602102931759975714",
+      "source_name": "关关讲小学语文",
+      "video_url": "https://www.douyin.com/video/7602102931759975714",
+      "fit_score": 73.0,
+      "engagement_score": 64144.0,
+      "comment_count": 17000.0
+    },
+    {
+      "video_id": "7603037742095781155",
+      "source_name": "紫一老师讲剑桥",
+      "video_url": "https://www.douyin.com/video/7603037742095781155",
+      "fit_score": 72.0,
+      "engagement_score": 62001.0,
+      "comment_count": 0.0
+    },
+    {
+      "video_id": "7441222380841733402",
+      "source_name": "老尼讲语文",
+      "video_url": "https://www.douyin.com/video/7441222380841733402",
+      "fit_score": 60.0,
+      "engagement_score": 58013.0,
+      "comment_count": 0.0
+    },
+    {
+      "video_id": "7452287155893751099",
+      "source_name": "老尼讲语文",
+      "video_url": "https://www.douyin.com/video/7452287155893751099",
+      "fit_score": 56.0,
+      "engagement_score": 44020.0,
+      "comment_count": 0.0
+    },
+    {
+      "video_id": "7451259770419383592",
+      "source_name": "老尼讲语文",
+      "video_url": "https://www.douyin.com/video/7451259770419383592",
+      "fit_score": 63.0,
+      "engagement_score": 44018.0,
+      "comment_count": 0.0
+    }
+  ],
+  "limitations": [
+    "本报告覆盖当前本地严格有效的 362 条已下载视频，不包含后续新增采集的视频。",
+    "ASR 使用本地 CPU 模型，中文转写存在错字；适合做结构/语速参考，不适合直接引用逐字稿。",
+    "OCR 和姿态基于每条 3 帧抽样，适合批量趋势判断，不能替代逐帧人工标注。",
+    "view_count 当前为 0，报告沿用点赞、评论、转发组合的互动代理分。"
+  ]
+}

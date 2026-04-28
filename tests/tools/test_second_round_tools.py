@@ -51,6 +51,39 @@ class SecondRoundToolsTestCase(unittest.TestCase):
         self.assertEqual(status["failed_count"], 1)
         self.assertEqual(status["processed_video_count"], 2)
 
+    def test_full_multimodal_risk_counts_and_correlation(self) -> None:
+        module = _load_module("build_full_multimodal_analysis", "build_full_multimodal_analysis.py")
+        rows = [
+            {
+                "person_count": 2.0,
+                "structure_completeness": 0.1,
+                "subtitle_consistency": 0.2,
+                "face_ratio": 0.01,
+                "face_center_score": 0.6,
+                "speech_rate_cpm": 380,
+                "fit_score": 60,
+                "engagement_score": 10,
+            },
+            {
+                "person_count": 1.0,
+                "structure_completeness": 0.8,
+                "subtitle_consistency": 0.9,
+                "face_ratio": 0.03,
+                "face_center_score": 0.9,
+                "speech_rate_cpm": 240,
+                "fit_score": 80,
+                "engagement_score": 30,
+            },
+        ]
+
+        risks = module._risk_counts(rows)
+        corr = module._correlation_hint(rows)
+
+        self.assertEqual(risks["multi_person_or_unstable_subject"], 1)
+        self.assertEqual(risks["low_structure"], 1)
+        self.assertEqual(risks["speech_too_fast"], 1)
+        self.assertGreater(corr["fit_score"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
