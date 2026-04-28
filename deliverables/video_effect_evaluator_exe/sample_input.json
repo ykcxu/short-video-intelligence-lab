@@ -1,0 +1,119 @@
+{
+  "row": {
+    "video_id": "7529497065858436387",
+    "source_name": "关关讲小学语文",
+    "video_url": "https://www.douyin.com/video/7529497065858436387",
+    "fit_score": 68.0,
+    "fit_level": "medium",
+    "engagement_score": 135686.0,
+    "like_count": 50000.0,
+    "comment_count": 562.0,
+    "share_count": 42000.0,
+    "speech_rate_cpm": 128.29,
+    "speech_duration_sec": 29.932,
+    "opening_hook_score": 0.0,
+    "ocr_coverage": 1.0,
+    "ocr_readability": 0.8332,
+    "subtitle_consistency": 0.6146,
+    "face_detected": true,
+    "face_ratio": 0.0355,
+    "face_center_score": 0.819,
+    "pose_detected": true,
+    "pose_facing_score": 1.0,
+    "gesture_activity_score": 1.0,
+    "person_count": 4.333,
+    "subject_ratio": 0.052,
+    "background_clutter_score": 0.844,
+    "structure_completeness": 0.0,
+    "knowledge_density": 0.0,
+    "metric_suspicious": false,
+    "suspicious_reason": "",
+    "trusted_engagement_score": 135686.0
+  },
+  "comments": [
+    {
+      "video_id": "7529497065858436387",
+      "video_url": "https://www.douyin.com/video/7529497065858436387",
+      "nickname": "远离烧酒（小三哥）",
+      "content": "那井田君是什么",
+      "like_count": 1,
+      "reply_count": 1,
+      "source_name": "关关讲小学语文",
+      "is_author_reply": false,
+      "topics": [
+        "其他"
+      ],
+      "sentiment": "中性"
+    },
+    {
+      "video_id": "7529497065858436387",
+      "video_url": "https://www.douyin.com/video/7529497065858436387",
+      "nickname": "用户2599885698288",
+      "content": "主播你叫什么。",
+      "like_count": 0,
+      "reply_count": 1,
+      "source_name": "关关讲小学语文",
+      "is_author_reply": false,
+      "topics": [
+        "其他"
+      ],
+      "sentiment": "中性"
+    },
+    {
+      "video_id": "7529497065858436387",
+      "video_url": "https://www.douyin.com/video/7529497065858436387",
+      "nickname": "陪你看，眼界",
+      "content": "蟠螭",
+      "like_count": 2,
+      "reply_count": 0,
+      "source_name": "关关讲小学语文",
+      "is_author_reply": false,
+      "topics": [
+        "其他"
+      ],
+      "sentiment": "中性"
+    },
+    {
+      "video_id": "7529497065858436387",
+      "video_url": "https://www.douyin.com/video/7529497065858436387",
+      "nickname": "探索发现",
+      "content": "依据在那里，拿出来走两步",
+      "like_count": 1,
+      "reply_count": 0,
+      "source_name": "关关讲小学语文",
+      "is_author_reply": false,
+      "topics": [
+        "其他"
+      ],
+      "sentiment": "中性"
+    },
+    {
+      "video_id": "7529497065858436387",
+      "video_url": "https://www.douyin.com/video/7529497065858436387",
+      "nickname": "时光可待你安好",
+      "content": "社君，牛：八百里，虎：山君，兔：菊道人，龙：蟠螭，蛇：玉京子，马：追风，羊：嵩山君，猴：王孙，鸡：司晨，狗：乌龙，猪：乌金。",
+      "like_count": 0,
+      "reply_count": 0,
+      "source_name": "关关讲小学语文",
+      "is_author_reply": false,
+      "topics": [
+        "其他"
+      ],
+      "sentiment": "中性"
+    },
+    {
+      "video_id": "7529497065858436387",
+      "video_url": "https://www.douyin.com/video/7529497065858436387",
+      "nickname": "天天快乐",
+      "content": "王孙啥意思？",
+      "like_count": 2,
+      "reply_count": 1,
+      "source_name": "关关讲小学语文",
+      "is_author_reply": false,
+      "topics": [
+        "其他"
+      ],
+      "sentiment": "咨询"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+
+Algorithm : SHA256
+Hash      : CD7300CD8235C7EEE3CBC5A2A9D21F89F872AAF9571F0B5A932197973935FF9D
+Path      : C:\Users\Administrator\Desktop\codex\short-video-intelligence-lab\deliverables\video_effect_evaluator_exe\video_effect_evaluator.exe
+
+

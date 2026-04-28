@@ -1,0 +1,15 @@
+视频效果评价器 EXE 使用说明
+
+1. 本 exe 已内置 video_effect_model.json，不需要安装 Python，不需要项目源码。
+2. 基本运行：
+   video_effect_evaluator.exe --input sample_input.json
+3. 输出到文件：
+   video_effect_evaluator.exe --input sample_input.json --output result.json
+4. 如需使用外部模型：
+   video_effect_evaluator.exe --model video_effect_model.json --input sample_input.json
+5. 输入 JSON 格式：
+   {
+     "row": { 单条视频特征字段 },
+     "comments": [ 评论特征列表 ]
+   }
+6. 当前 exe 是 Windows 64 位版本。
