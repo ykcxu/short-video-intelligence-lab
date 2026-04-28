@@ -125,11 +125,14 @@ def _build_targets(
         status = comment_status.get(video_id, {"artifact_count": 0, "has_non_empty_comments": False})
         if status["has_non_empty_comments"]:
             continue
-        priority = 1 if detail["comment_count"] > 0 else 0
+        has_expected_comments = detail["comment_count"] > 0
+        priority = 1 if has_expected_comments else 0
         targets.append(
             {
                 **detail,
                 "priority": priority,
+                "comment_expected_status": "comment_expected" if has_expected_comments else "no_comment_expected",
+                "should_backfill_comment": has_expected_comments,
                 "has_comment_artifact": bool(status["artifact_count"]),
                 "has_non_empty_comments": False,
             }

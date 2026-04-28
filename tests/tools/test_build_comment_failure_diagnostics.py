@@ -35,6 +35,7 @@ def _write_targets(workspace: Path) -> None:
                 {"video_id": "empty", "comment_count": 10, "has_comment_artifact": True},
                 {"video_id": "noise", "comment_count": 5, "has_non_empty_comments": True},
                 {"video_id": "missing", "comment_count": 3, "has_comment_artifact": False},
+                {"video_id": "none", "comment_count": 0, "has_comment_artifact": False},
             ]
         },
     )
@@ -86,9 +87,21 @@ class BuildCommentFailureDiagnosticsTestCase(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             payload = json.loads((workspace / "artifacts" / "status" / "comment_failure_diagnostics.json").read_text(encoding="utf-8"))
-            self.assertEqual(payload["status_counts"], {"real_comment": 1, "empty_response": 1, "noise_only": 1, "missing_artifact": 1})
-            self.assertEqual(payload["summary"]["hit_rate"], 0.25)
-            self.assertEqual(payload["summary"]["failure_video_count"], 3)
+            self.assertEqual(payload["status_counts"], {"real_comment": 1, "empty_response": 1, "noise_only": 1, "missing_artifact": 2})
+            self.assertEqual(
+                payload["expected_status_counts"],
+                {
+                    "real_comment": 1,
+                    "no_comment_expected": 1,
+                    "comment_expected_empty_response": 1,
+                    "comment_expected_noise_only": 1,
+                    "comment_expected_missing_artifact": 1,
+                },
+            )
+            self.assertEqual(payload["summary"]["hit_rate"], 0.2)
+            self.assertEqual(payload["summary"]["failure_video_count"], 4)
+            self.assertEqual(payload["summary"]["no_comment_expected_video_count"], 1)
+            self.assertEqual(payload["summary"]["comment_expected_but_uncollected_video_count"], 3)
             self.assertEqual(payload["failure_reasons"]["empty_response"]["scan_meta.warning:networkidle timeout"], 2)
             self.assertEqual(payload["failure_reasons"]["noise_only"]["raw.stub:true"], 2)
             self.assertEqual(payload["failure_reasons"]["noise_only"]["raw.response_url:x/a"], 2)
@@ -96,8 +109,9 @@ class BuildCommentFailureDiagnosticsTestCase(unittest.TestCase):
 
             markdown = (workspace / "artifacts" / "status" / "comment_failure_diagnostics.md").read_text(encoding="utf-8")
             self.assertIn("# 评论补采命中率诊断", markdown)
-            self.assertIn("| missing_artifact | 1 |", markdown)
-            self.assertIn("| noise | noise_only | 1 | 2 | 0 | `raw.response_url:x/a` |", markdown)
+            self.assertIn("| missing_artifact | 2 |", markdown)
+            self.assertIn("| no_comment_expected | 1 |", markdown)
+            self.assertIn("| noise | noise_only | comment_expected_noise_only | 5 | 1 | 2 | 0 | `raw.response_url:x/a` |", markdown)
 
     def test_uses_artifacts_when_targets_are_absent(self) -> None:
         module = _load_tool_module()

@@ -113,6 +113,42 @@ class RunCommentBackfillBatchTestCase(unittest.TestCase):
             self.assertEqual(payload["targets"][0]["priority"], 20)
             fake_run.assert_not_called()
 
+    def test_dry_run_filters_comment_expected_before_limit(self) -> None:
+        module = _load_tool_module()
+        with TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            _write_targets(
+                workspace,
+                [
+                    _make_target("1111111111", comment_count=0, should_backfill_comment=False),
+                    _make_target("2222222222", comment_count=6, should_backfill_comment=True),
+                    _make_target("3333333333", comment_count=9),
+                ],
+            )
+
+            stdout = io.StringIO()
+            with patch.object(module.subprocess, "run") as fake_run:
+                with redirect_stdout(stdout):
+                    exit_code = module.main(
+                        [
+                            "--workspace",
+                            str(workspace),
+                            "--session-name",
+                            "douyin",
+                            "--only-comment-expected",
+                            "--limit",
+                            "1",
+                            "--dry-run",
+                        ]
+                    )
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(payload["planned_count"], 1)
+            self.assertEqual(payload["targets"][0]["video_id"], "2222222222")
+            self.assertTrue(payload["targets"][0]["should_backfill_comment"])
+            fake_run.assert_not_called()
+
     def test_main_runs_each_target_and_writes_summary_log(self) -> None:
         module = _load_tool_module()
         with TemporaryDirectory() as temp_dir:

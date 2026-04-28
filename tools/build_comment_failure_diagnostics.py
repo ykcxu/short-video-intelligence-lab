@@ -16,6 +16,13 @@ REAL_COMMENT_RESPONSE_PATTERNS = (
     "/aweme/v1/web/comment/list/reply",
 )
 STATUS_ORDER = ("real_comment", "empty_response", "noise_only", "missing_artifact")
+EXPECTED_STATUS_ORDER = (
+    "real_comment",
+    "no_comment_expected",
+    "comment_expected_empty_response",
+    "comment_expected_noise_only",
+    "comment_expected_missing_artifact",
+)
 VIDEO_ID_IN_URL_PART = "/video/"
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -79,9 +86,13 @@ def _classify_video(video_id: str, target: dict[str, Any], artifacts: list[dict[
     comment_count = sum(int(item["comment_count"]) for item in artifacts)
     real_count = sum(int(item["real_comment_count"]) for item in artifacts)
     status = _resolve_status(artifacts, comment_count, real_count)
+    expected_comment_count = _target_comment_count(target)
+    expected_status = _resolve_expected_status(status, expected_comment_count)
     return {
         "video_id": video_id,
         "status": status,
+        "expected_status": expected_status,
+        "expected_comment_count": expected_comment_count,
         "artifact_count": len(artifacts),
         "comment_count": comment_count,
         "real_comment_count": real_count,
@@ -95,6 +106,19 @@ def _resolve_status(artifacts: list[dict[str, Any]], comment_count: int, real_co
     if real_count > 0:
         return "real_comment"
     return "empty_response" if comment_count == 0 else "noise_only"
+def _target_comment_count(target: dict[str, Any]) -> int:
+    """读取详情侧评论量，用来判断是无评论还是评论未取到。"""
+    try:
+        return max(0, int(target.get("comment_count") or 0))
+    except (TypeError, ValueError):
+        return 0
+def _resolve_expected_status(status: str, expected_comment_count: int) -> str:
+    """把补采状态映射为业务可读的评论预期分类。"""
+    if status == "real_comment":
+        return "real_comment"
+    if expected_comment_count <= 0:
+        return "no_comment_expected"
+    return f"comment_expected_{status}"
 def _extract_comments(payload: dict[str, Any]) -> list[Any]:
     comments = payload.get("comments")
     if isinstance(comments, list):
@@ -154,25 +178,41 @@ def _merge_reasons(artifacts: list[dict[str, Any]]) -> dict[str, int]:
     return dict(merged.most_common())
 def _build_report(workspace: Path, target_path: Path, videos: list[dict[str, Any]]) -> dict[str, Any]:
     status_counts = Counter(item["status"] for item in videos)
+    expected_status_counts = Counter(item["expected_status"] for item in videos)
     failure_reasons = _aggregate_failure_reasons(videos)
     return {
         "ok": True,
         "workspace": str(workspace),
         "target_path": str(target_path),
-        "summary": _build_summary(videos, status_counts),
+        "summary": _build_summary(videos, status_counts, expected_status_counts),
         "status_counts": {status: status_counts.get(status, 0) for status in STATUS_ORDER},
+        "expected_status_counts": {status: expected_status_counts.get(status, 0) for status in EXPECTED_STATUS_ORDER},
         "failure_reasons": failure_reasons,
         "videos": videos,
     }
-def _build_summary(videos: list[dict[str, Any]], status_counts: Counter[str]) -> dict[str, Any]:
+def _build_summary(
+    videos: list[dict[str, Any]],
+    status_counts: Counter[str],
+    expected_status_counts: Counter[str],
+) -> dict[str, Any]:
     total = len(videos)
     real_count = status_counts.get("real_comment", 0)
+    expected_missing = _expected_missing_count(expected_status_counts)
     return {
         "video_count": total,
         "real_comment_video_count": real_count,
         "failure_video_count": total - real_count,
+        "no_comment_expected_video_count": expected_status_counts.get("no_comment_expected", 0),
+        "comment_expected_but_uncollected_video_count": expected_missing,
         "hit_rate": round(real_count / total, 6) if total else 0,
     }
+def _expected_missing_count(expected_status_counts: Counter[str]) -> int:
+    """汇总平台有评论量但当前未拿到真实评论的视频数。"""
+    return sum(
+        expected_status_counts.get(status, 0)
+        for status in EXPECTED_STATUS_ORDER
+        if status.startswith("comment_expected_")
+    )
 def _aggregate_failure_reasons(videos: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
     counters: dict[str, Counter[str]] = {status: Counter() for status in STATUS_ORDER if status != "real_comment"}
     for video in videos:
@@ -192,9 +232,17 @@ def _render_markdown(report: dict[str, Any]) -> str:
     lines.extend(_summary_lines(report))
     lines.extend(["", "## 视频状态分布", "", "| 状态 | 视频数 |", "| --- | ---: |"])
     lines.extend(f"| {status} | {report['status_counts'][status]} |" for status in STATUS_ORDER)
+    lines.extend(["", "## 评论预期分类", "", "| 分类 | 视频数 |", "| --- | ---: |"])
+    lines.extend(f"| {status} | {report['expected_status_counts'][status]} |" for status in EXPECTED_STATUS_ORDER)
     lines.extend(["", "## 失败原因聚合", ""])
     lines.extend(_failure_reason_lines(report["failure_reasons"]))
-    lines.extend(["", "## 视频明细", "", "| 视频 ID | 状态 | 产物数 | 评论数 | 真实评论数 | 主要失败原因 |", "| --- | --- | ---: | ---: | ---: | --- |"])
+    lines.extend([
+        "",
+        "## 视频明细",
+        "",
+        "| 视频 ID | 状态 | 评论预期分类 | 详情评论数 | 产物数 | 评论数 | 真实评论数 | 主要失败原因 |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | --- |",
+    ])
     lines.extend(_video_line(video) for video in report["videos"])
     return "\n".join(lines) + "\n"
 def _summary_lines(report: dict[str, Any]) -> list[str]:
@@ -203,6 +251,8 @@ def _summary_lines(report: dict[str, Any]) -> list[str]:
         f"- 视频总数：{summary['video_count']}",
         f"- 真实评论视频数：{summary['real_comment_video_count']}",
         f"- 失败视频数：{summary['failure_video_count']}",
+        f"- 平台显示无评论视频数：{summary['no_comment_expected_video_count']}",
+        f"- 平台显示有评论但未取到视频数：{summary['comment_expected_but_uncollected_video_count']}",
         f"- 命中率：{summary['hit_rate']:.2%}",
     ]
 def _failure_reason_lines(failure_reasons: dict[str, dict[str, int]]) -> list[str]:
@@ -218,7 +268,11 @@ def _failure_reason_lines(failure_reasons: dict[str, dict[str, int]]) -> list[st
     return lines
 def _video_line(video: dict[str, Any]) -> str:
     reason = next(iter(video.get("failure_reasons") or {"-": 0}))
-    return f"| {video['video_id']} | {video['status']} | {video['artifact_count']} | {video['comment_count']} | {video['real_comment_count']} | `{reason}` |"
+    return (
+        f"| {video['video_id']} | {video['status']} | {video['expected_status']} | "
+        f"{video['expected_comment_count']} | {video['artifact_count']} | {video['comment_count']} | "
+        f"{video['real_comment_count']} | `{reason}` |"
+    )
 def _extract_video_id(payload: dict[str, Any], fallback_id: str = "") -> str:
     direct_id = str(payload.get("video_id") or "").strip()
     if direct_id:

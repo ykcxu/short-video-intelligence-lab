@@ -97,6 +97,8 @@ class BuildCommentBackfillTargetsTestCase(unittest.TestCase):
             self.assertEqual(payload["targets"][0]["like_count"], 3)
             self.assertEqual(payload["targets"][0]["share_count"], 2)
             self.assertEqual(payload["targets"][0]["view_count"], 1)
+            self.assertEqual(payload["targets"][0]["comment_expected_status"], "comment_expected")
+            self.assertTrue(payload["targets"][0]["should_backfill_comment"])
             self.assertTrue(payload["targets"][0]["has_comment_artifact"])
 
             output_json = workspace / "artifacts" / "collector" / "comment_backfill_targets.json"
@@ -145,6 +147,10 @@ class BuildCommentBackfillTargetsTestCase(unittest.TestCase):
             self.assertEqual([item["video_id"] for item in payload["targets"]], ["4444444444", "5555555555"])
             self.assertEqual(payload["targets"][0]["priority"], 1)
             self.assertEqual(payload["targets"][1]["priority"], 0)
+            self.assertEqual(payload["targets"][0]["comment_expected_status"], "comment_expected")
+            self.assertEqual(payload["targets"][1]["comment_expected_status"], "no_comment_expected")
+            self.assertTrue(payload["targets"][0]["should_backfill_comment"])
+            self.assertFalse(payload["targets"][1]["should_backfill_comment"])
             self.assertEqual(payload["targets"][0]["video_url"], "https://www.douyin.com/video/4444444444")
             output_txt = workspace / "artifacts" / "collector" / "comment_backfill_targets.txt"
             self.assertEqual(

@@ -1,15 +1,15 @@
 # 短视频情报项目 TODO
 
-> 更新时间：2026-04-27  
+> 更新时间：2026-04-28  
 > 当前阶段：一期数据采集与严格有效池修复。  
 > 当前原则：先保证数据可信，再扩大评论与低覆盖账号补采；能自动推进的任务尽量拆成互不冲突的小批次。
 
 ## 当前状态快照
 
-- Git 最新提交：`cd79396 支持按缺失评论产物补采`（本轮推进：快速补评论与第一版账号/视频分析）
+- Git 最新提交：`587f6c4 增加批量多模态流水线`（本轮推进：评论补采预期分类与批处理过滤）
 - 严格有效池：输入视频 `628`，严格有效 `362`，保留率 `57.64%`
 - 过滤原因：`quality_report_filtered=26`，`missing_required_assets=5`，`not_homepage_observed=133`，`detail_account_not_mentioned=89`
-- 评论补采：detail `623`，已有评论产物视频 `130`，仍需补采目标 `532`；其中无评论 artifact `493`，已有 artifact 但真实评论不足 `39`
+- 评论补采：detail `623`，已有评论产物视频 `388`，仍需补采目标 `277`；其中平台显示无评论 `131`，平台显示有评论但未取到 `146`
 - 下载补采目标：`5` 个账号，其中 `2` 个账号需要刷新数据集；本地 MP4 文件约 `630`
 - 高优先级异常账号：`希望学小学` 严格有效 `0/62`，`紫一老师讲剑桥` 严格有效 `18/57`，`unknown` 严格有效 `0/8` 且本地 MP4 为 0
 
@@ -45,7 +45,10 @@
   - 验收：已新增 `tools/run_comment_backfill_batch.py`，支持 dry-run、小批次、重试、JSON 摘要和日志；当前待补目标已下降到 `277`。
 - [x] P0-5 评论补采命中率诊断
   - 当前问题：修复后新跑 20 条，多数产物真实评论为 0，需要区分无评论、页面未展开、登录/风控、接口无响应。
-  - 验收：已新增 `tools/build_comment_failure_diagnostics.py`，输出 `artifacts/status/comment_failure_diagnostics.{json,md}`；当前待补目标 532 条中 `missing_artifact=493`、`noise_only=33`、`empty_response=6`。
+  - 验收：已新增 `tools/build_comment_failure_diagnostics.py`，输出 `artifacts/status/comment_failure_diagnostics.{json,md}`；当前待补目标 `277` 条中平台显示无评论 `131`，平台显示有评论但未取到 `146`。
+- [x] P0-6 评论补采目标区分“无评论/未取到”
+  - 当前问题：此前补采队列会混入详情评论数为 0 的视频，容易误判为“抓取失败”。
+  - 验收：`comment_backfill_targets.json` 已写入 `comment_expected_status` 和 `should_backfill_comment`；`run_comment_backfill_batch.py` 已支持 `--only-comment-expected`。
 
 ## P1：自动化与运维面板
 
@@ -108,7 +111,7 @@
 ## 当前最推荐执行顺序
 
 1. `P1-1/P1-2/P1-3` 已完成，评论补采状态已进入一键流水线与运行总览。
-2. `P0-5 评论补采命中率诊断` 已完成，当前主要瓶颈是 `493` 条待补目标尚无评论产物。
+2. `P0-5/P0-6 评论补采诊断` 已完成，当前主要瓶颈是 `146` 条平台显示有评论但未取到；下一批应优先带 `--only-comment-expected` 跑。
 3. 同时准备 `P0-1/P0-2` 高优先级账号定向重采。
 4. 每轮采集后跑 `tools/run_phase1_analysis_pipeline.py` 刷新严格池。
 
@@ -116,6 +119,6 @@
 
 - 已有采集、下载、detail、严格池、正向因素分析的主链路；现在瓶颈不是“有没有代码”，而是“采集归因可信度”和“评论真实命中率”。
 - 下一步应该少做盲目大批量采集，多做状态报告与失败分类，让每轮补采都能证明覆盖率实际改善。
-- 评论失败诊断显示，评论补采首要问题不是少量空响应，而是大量 `missing_artifact`，下一批应优先稳定跑完待补队列，再针对 `noise_only` 优化接口监听过滤。
+- 评论失败诊断已经拆开“平台显示无评论”和“平台显示有评论但未取到”；下一批应优先补 `comment_expected_missing_artifact=107`，再处理 `comment_expected_noise_only=33` 和 `comment_expected_empty_response=6`。
 
 

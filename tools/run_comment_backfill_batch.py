@@ -16,6 +16,8 @@ SUMMARY_FIELDS = (
     "has_comment_artifact",
     "has_non_empty_comments",
     "comment_count",
+    "comment_expected_status",
+    "should_backfill_comment",
     "priority",
 )
 
@@ -58,6 +60,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="只输出计划，不实际调用 CLI。")
     parser.add_argument("--only-missing-artifact", action="store_true", help="只执行尚无评论产物的目标。")
     parser.add_argument("--skip-existing-artifact", action="store_true", help="跳过已有评论产物的目标。")
+    parser.add_argument("--only-comment-expected", action="store_true", help="只执行详情侧评论数大于 0 的目标。")
     return parser.parse_args(list(argv) if argv is not None else None)
 
 
@@ -65,6 +68,7 @@ def _prepare_targets(path: Path, args: argparse.Namespace) -> list[dict[str, Any
     """先按产物状态过滤，再按 limit 截断，保证 dry-run 与实际执行一致。"""
     targets = _load_targets(path)
     targets = _filter_targets_by_artifact(targets, args)
+    targets = _filter_targets_by_comment_expected(targets, args.only_comment_expected)
     return _apply_limit(targets, args.limit)
 
 
@@ -76,6 +80,22 @@ def _filter_targets_by_artifact(
     if not args.only_missing_artifact and not args.skip_existing_artifact:
         return list(targets)
     return [target for target in targets if target.get("has_comment_artifact") is False]
+def _filter_targets_by_comment_expected(
+    targets: list[dict[str, Any]],
+    only_comment_expected: bool,
+) -> list[dict[str, Any]]:
+    """只保留详情侧显示有评论的视频，用于快速补齐可分析评论。"""
+    if not only_comment_expected:
+        return list(targets)
+    return [target for target in targets if _has_expected_comments(target)]
+def _has_expected_comments(target: dict[str, Any]) -> bool:
+    """兼容旧目标文件；优先用显式布尔字段，其次回退到 comment_count。"""
+    if "should_backfill_comment" in target:
+        return bool(target["should_backfill_comment"])
+    try:
+        return int(target.get("comment_count") or 0) > 0
+    except (TypeError, ValueError):
+        return False
 
 
 def _run_targets(
