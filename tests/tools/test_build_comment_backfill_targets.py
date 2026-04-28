@@ -63,6 +63,15 @@ class BuildCommentBackfillTargetsTestCase(unittest.TestCase):
                     "metrics": {"comment_count": 4, "like_count": 8, "share_count": 9, "view_count": 10},
                 },
             )
+            _write_detail(
+                workspace,
+                "video_detail_444.json",
+                {
+                    "video_id": "4444444444",
+                    "video_url": "https://www.douyin.com/video/4444444444",
+                    "comment_count": 99,
+                },
+            )
             _write_comments(
                 workspace,
                 "video_comments_111.json",
@@ -81,6 +90,15 @@ class BuildCommentBackfillTargetsTestCase(unittest.TestCase):
                 "video_comments_222.json",
                 {"video_id": "2222222222", "comments": []},
             )
+            _write_comments(
+                workspace,
+                "video_comments_444.json",
+                {
+                    "video_id": "4444444444",
+                    "comments": [],
+                    "scan_meta": {"stop_reason": "empty_comment_state"},
+                },
+            )
 
             stdout = io.StringIO()
             with redirect_stdout(stdout):
@@ -88,9 +106,9 @@ class BuildCommentBackfillTargetsTestCase(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             payload = json.loads(stdout.getvalue())
-            self.assertEqual(payload["detail_count"], 3)
-            self.assertEqual(payload["comment_video_count"], 2)
-            self.assertEqual(payload["target_count"], 2)
+            self.assertEqual(payload["detail_count"], 4)
+            self.assertEqual(payload["comment_video_count"], 3)
+            self.assertEqual(payload["target_count"], 3)
             self.assertEqual(payload["planned_count"], 1)
             self.assertEqual(payload["targets"][0]["video_id"], "2222222222")
             self.assertEqual(payload["targets"][0]["comment_count"], 5)
@@ -111,6 +129,38 @@ class BuildCommentBackfillTargetsTestCase(unittest.TestCase):
                 output_txt.read_text(encoding="utf-8"),
                 "https://www.douyin.com/video/2222222222\n",
             )
+
+    def test_main_marks_runtime_empty_state_as_no_comment_observed(self) -> None:
+        module = _load_tool_module()
+        with TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            _write_detail(
+                workspace,
+                "video_detail_444.json",
+                {
+                    "video_id": "4444444444",
+                    "video_url": "https://www.douyin.com/video/4444444444",
+                    "comment_count": 99,
+                },
+            )
+            _write_comments(
+                workspace,
+                "video_comments_444.json",
+                {
+                    "video_id": "4444444444",
+                    "comments": [],
+                    "scan_meta": {"stop_reason": "empty_comment_state"},
+                },
+            )
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = module.main(["--workspace", str(workspace)])
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["targets"][0]["comment_expected_status"], "no_comment_observed")
+            self.assertFalse(payload["targets"][0]["should_backfill_comment"])
 
     def test_main_uses_fallback_id_and_orders_by_priority_then_comment_count(self) -> None:
         module = _load_tool_module()

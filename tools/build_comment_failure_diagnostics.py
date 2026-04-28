@@ -18,6 +18,7 @@ REAL_COMMENT_RESPONSE_PATTERNS = (
 STATUS_ORDER = ("real_comment", "empty_response", "noise_only", "missing_artifact")
 EXPECTED_STATUS_ORDER = (
     "real_comment",
+    "no_comment_observed",
     "no_comment_expected",
     "comment_expected_empty_response",
     "comment_expected_noise_only",
@@ -80,6 +81,7 @@ def _summarize_artifact(path: Path, payload: dict[str, Any]) -> dict[str, Any]:
         "collected_at": payload.get("collected_at"),
         "comment_count": len(comments),
         "real_comment_count": real_count,
+        "stop_reason": _scan_meta_value(payload, "stop_reason"),
         "reasons": _extract_reasons(payload, comments),
     }
 def _classify_video(video_id: str, target: dict[str, Any], artifacts: list[dict[str, Any]]) -> dict[str, Any]:
@@ -87,7 +89,7 @@ def _classify_video(video_id: str, target: dict[str, Any], artifacts: list[dict[
     real_count = sum(int(item["real_comment_count"]) for item in artifacts)
     status = _resolve_status(artifacts, comment_count, real_count)
     expected_comment_count = _target_comment_count(target)
-    expected_status = _resolve_expected_status(status, expected_comment_count)
+    expected_status = _resolve_expected_status(status, expected_comment_count, artifacts)
     return {
         "video_id": video_id,
         "status": status,
@@ -112,13 +114,18 @@ def _target_comment_count(target: dict[str, Any]) -> int:
         return max(0, int(target.get("comment_count") or 0))
     except (TypeError, ValueError):
         return 0
-def _resolve_expected_status(status: str, expected_comment_count: int) -> str:
+def _resolve_expected_status(status: str, expected_comment_count: int, artifacts: list[dict[str, Any]]) -> str:
     """把补采状态映射为业务可读的评论预期分类。"""
     if status == "real_comment":
         return "real_comment"
+    if _has_observed_no_comment(artifacts):
+        return "no_comment_observed"
     if expected_comment_count <= 0:
         return "no_comment_expected"
     return f"comment_expected_{status}"
+def _has_observed_no_comment(artifacts: list[dict[str, Any]]) -> bool:
+    """运行时页面明确给出无评论态时，优先按无评论处理。"""
+    return any(item.get("stop_reason") == "empty_comment_state" for item in artifacts)
 def _extract_comments(payload: dict[str, Any]) -> list[Any]:
     comments = payload.get("comments")
     if isinstance(comments, list):
@@ -162,6 +169,11 @@ def _add_scan_meta_reasons(reasons: Counter[str], scan_meta: Any) -> None:
         value = _clean_reason(warning)
         if value:
             reasons[f"scan_meta.warning:{value}"] += 1
+def _scan_meta_value(payload: dict[str, Any], key: str) -> str:
+    scan_meta = payload.get("scan_meta")
+    if not isinstance(scan_meta, dict):
+        return ""
+    return _clean_reason(scan_meta.get(key))
 def _normalize_response_url(value: Any) -> str:
     text = str(value or "").strip()
     if not text:
@@ -202,6 +214,7 @@ def _build_summary(
         "video_count": total,
         "real_comment_video_count": real_count,
         "failure_video_count": total - real_count,
+        "no_comment_observed_video_count": expected_status_counts.get("no_comment_observed", 0),
         "no_comment_expected_video_count": expected_status_counts.get("no_comment_expected", 0),
         "comment_expected_but_uncollected_video_count": expected_missing,
         "hit_rate": round(real_count / total, 6) if total else 0,
@@ -251,6 +264,7 @@ def _summary_lines(report: dict[str, Any]) -> list[str]:
         f"- 视频总数：{summary['video_count']}",
         f"- 真实评论视频数：{summary['real_comment_video_count']}",
         f"- 失败视频数：{summary['failure_video_count']}",
+        f"- 页面明确无评论视频数：{summary['no_comment_observed_video_count']}",
         f"- 平台显示无评论视频数：{summary['no_comment_expected_video_count']}",
         f"- 平台显示有评论但未取到视频数：{summary['comment_expected_but_uncollected_video_count']}",
         f"- 命中率：{summary['hit_rate']:.2%}",

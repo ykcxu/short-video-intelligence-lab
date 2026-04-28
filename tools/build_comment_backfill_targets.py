@@ -108,10 +108,12 @@ def _scan_comment_artifacts(comments_root: Path) -> dict[str, dict[str, Any]]:
         video_id = _extract_video_id(payload, file_hint_id)
         if not _is_valid_video_id(video_id):
             continue
-        current = status.setdefault(video_id, {"artifact_count": 0, "has_non_empty_comments": False})
+        current = status.setdefault(video_id, {"artifact_count": 0, "has_non_empty_comments": False, "has_observed_no_comment": False})
         current["artifact_count"] += 1
         if _has_non_empty_comments(payload):
             current["has_non_empty_comments"] = True
+        if _has_empty_comment_state(payload):
+            current["has_observed_no_comment"] = True
     return status
 
 
@@ -122,17 +124,18 @@ def _build_targets(
     """优先选择 comment_count>0 且没有非空评论产物的视频。"""
     targets: list[dict[str, Any]] = []
     for video_id, detail in details.items():
-        status = comment_status.get(video_id, {"artifact_count": 0, "has_non_empty_comments": False})
+        status = comment_status.get(video_id, {"artifact_count": 0, "has_non_empty_comments": False, "has_observed_no_comment": False})
         if status["has_non_empty_comments"]:
             continue
         has_expected_comments = detail["comment_count"] > 0
-        priority = 1 if has_expected_comments else 0
+        should_backfill = has_expected_comments and not status["has_observed_no_comment"]
+        priority = 1 if should_backfill else 0
         targets.append(
             {
                 **detail,
                 "priority": priority,
-                "comment_expected_status": "comment_expected" if has_expected_comments else "no_comment_expected",
-                "should_backfill_comment": has_expected_comments,
+                "comment_expected_status": _comment_expected_status(has_expected_comments, status),
+                "should_backfill_comment": should_backfill,
                 "has_comment_artifact": bool(status["artifact_count"]),
                 "has_non_empty_comments": False,
             }
@@ -207,6 +210,15 @@ def _has_non_empty_comments(payload: dict[str, Any]) -> bool:
     if isinstance(data, dict) and isinstance(data.get("comments"), list):
         return any(_is_real_comment_item(item) for item in data["comments"])
     return False
+def _has_empty_comment_state(payload: dict[str, Any]) -> bool:
+    """页面运行时明确展示无评论态时，后续不再反复补采。"""
+    scan_meta = payload.get("scan_meta")
+    return isinstance(scan_meta, dict) and scan_meta.get("stop_reason") == "empty_comment_state"
+def _comment_expected_status(has_expected_comments: bool, status: dict[str, Any]) -> str:
+    """生成补采业务分类，区分详情预期和运行时观察。"""
+    if status.get("has_observed_no_comment"):
+        return "no_comment_observed"
+    return "comment_expected" if has_expected_comments else "no_comment_expected"
 
 
 def _is_real_comment_item(item: Any) -> bool:
