@@ -140,7 +140,8 @@ def _load_whisper_model_factory() -> Callable[[str], Any] | None:
         from faster_whisper import WhisperModel  # type: ignore
     except ImportError:
         return None
-    return WhisperModel
+    # 当前默认运行在无 CUDA 的 Windows 本机，强制 CPU int8，避免 faster-whisper 自动尝试 CUDA 后缺 cublas。
+    return lambda model_size: WhisperModel(model_size, device="cpu", compute_type="int8")
 
 
 def _extract_items(payload: Any) -> list[Mapping[str, Any]]:

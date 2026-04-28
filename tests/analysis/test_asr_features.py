@@ -100,6 +100,22 @@ class AsrFeaturesTest(unittest.TestCase):
 
         self.assertIn("错误", str(raised.exception))
 
+    def test_load_whisper_model_factory_forces_cpu_int8(self) -> None:
+        calls = []
+
+        class FakeModel:
+            def __init__(self, *args, **kwargs) -> None:
+                calls.append((args, kwargs))
+
+        with patch.dict("sys.modules", {"faster_whisper": SimpleNamespace(WhisperModel=FakeModel)}):
+            factory = asr_features._load_whisper_model_factory()
+            self.assertIsNotNone(factory)
+            factory("tiny")
+
+        self.assertEqual(calls[0][0], ("tiny",))
+        self.assertEqual(calls[0][1]["device"], "cpu")
+        self.assertEqual(calls[0][1]["compute_type"], "int8")
+
 
 if __name__ == "__main__":
     unittest.main()
