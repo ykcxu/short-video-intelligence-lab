@@ -1,0 +1,40 @@
+{
+  "row": {
+    "video_id": "7529497065858436387",
+    "source_name": "关关讲小学语文",
+    "video_url": "https://www.douyin.com/video/7529497065858436387",
+    "fit_score": 68.0,
+    "fit_level": "medium",
+    "speech_rate_cpm": 128.29,
+    "speech_duration_sec": 29.932,
+    "opening_hook_score": 0.0,
+    "ocr_coverage": 1.0,
+    "ocr_readability": 0.8332,
+    "subtitle_consistency": 0.6146,
+    "face_detected": true,
+    "face_ratio": 0.0355,
+    "face_center_score": 0.819,
+    "pose_detected": true,
+    "pose_facing_score": 1.0,
+    "gesture_activity_score": 1.0,
+    "person_count": 4.333,
+    "subject_ratio": 0.052,
+    "background_clutter_score": 0.844,
+    "structure_completeness": 0.0,
+    "knowledge_density": 0.0,
+    "metric_suspicious": false,
+    "suspicious_reason": "",
+    "trusted_engagement_score": 135686.0,
+    "planned_title": "你知道十二生肖的别称吗？评论区说说你还知道哪些传统文化冷知识"
+  },
+  "comments": [
+    {
+      "content": "这条真实评论应该被评分器忽略",
+      "topics": [
+        "资料领取"
+      ],
+      "sentiment": "咨询",
+      "is_author_reply": true
+    }
+  ]
+}

@@ -1,15 +1,29 @@
-视频效果评价器 EXE 使用说明
+视频上架前效果评价器 EXE 使用说明
 
 1. 本 exe 已内置 video_effect_model.json，不需要安装 Python，不需要项目源码。
-2. 基本运行：
-   video_effect_evaluator.exe --input sample_input.json
-3. 输出到文件：
-   video_effect_evaluator.exe --input sample_input.json --output result.json
-4. 如需使用外部模型：
-   video_effect_evaluator.exe --model video_effect_model.json --input sample_input.json
-5. 输入 JSON 格式：
+2. 这是“上架前评分器”：评分时不会使用该视频实际播放量、点赞、评论、转发或真实评论内容。
+3. 即使输入 JSON 里带有 view_count / like_count / comment_count / share_count / engagement_score / comments，程序也只会记录 ignored_runtime_fields，不会让这些字段影响评分。
+4. 基本运行：
+   video_effect_evaluator.exe --input sample_pre_publish_input.json
+5. 输出到文件：
+   video_effect_evaluator.exe --input sample_pre_publish_input.json --output result.json
+6. 如需使用外部模型：
+   video_effect_evaluator.exe --model video_effect_model.json --input sample_pre_publish_input.json
+7. 输入 JSON 格式：
    {
-     "row": { 单条视频特征字段 },
-     "comments": [ 评论特征列表 ]
+     "row": {
+       "planned_title": "拟发布标题",
+       "planned_caption": "拟发布文案",
+       "script_text": "口播脚本",
+       "fit_score": 画面基础评分,
+       "ocr_readability": OCR可读性,
+       "subtitle_consistency": 字幕一致性,
+       "structure_completeness": 话术完整度,
+       "face_center_score": 人物居中,
+       "pose_facing_score": 正向镜头,
+       "speech_rate_cpm": 语速,
+       "person_count": 人物数
+     },
+     "comments": []
    }
-6. 当前 exe 是 Windows 64 位版本。
+8. 当前 exe 是 Windows 64 位版本。

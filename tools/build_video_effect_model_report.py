@@ -91,8 +91,8 @@ def _account_section(rows: list[dict[str, Any]], scores: list[dict[str, Any]]) -
     for s in scores: groups[s['source_name']].append(s)
     body = ''
     for name, items in sorted(groups.items()):
-        body += f"<tr><td>{_e(name)}</td><td>{len(items)}</td><td>{_avg([x['effect_score'] for x in items]):.2f}</td><td>{_avg([x['production_quality_score'] for x in items]):.2f}</td><td>{_avg([x['comment_conversion_score'] for x in items]):.2f}</td><td>{_e(_account_tip(items))}</td></tr>"
-    return f"<section><h2>4. 账号级评分和改进方向</h2><table><thead><tr><th>账号</th><th>视频数</th><th>效果均分</th><th>制作均分</th><th>评论转化均分</th><th>优先动作</th></tr></thead><tbody>{body}</tbody></table></section>"
+        body += f"<tr><td>{_e(name)}</td><td>{len(items)}</td><td>{_avg([x['effect_score'] for x in items]):.2f}</td><td>{_avg([x['production_quality_score'] for x in items]):.2f}</td><td>{_avg([x['comment_potential_score'] for x in items]):.2f}</td><td>{_e(_account_tip(items))}</td></tr>"
+    return f"<section><h2>4. 账号级评分和改进方向</h2><table><thead><tr><th>账号</th><th>视频数</th><th>效果均分</th><th>制作均分</th><th>评论潜力均分</th><th>优先动作</th></tr></thead><tbody>{body}</tbody></table></section>"
 def _account_tip(items: list[dict[str, Any]]) -> str:
     risk_counter = Counter(r for item in items for r in item.get('risks', []))
     if not risk_counter: return "复用高分视频结构，继续测试标题和评论钩子"
@@ -105,7 +105,7 @@ def _score_head() -> str:
 def _score_row(i: int, s: dict[str, Any]) -> str:
     topics = '、'.join(f"{k}({v})" for k,v in s.get('comment_topics', {}).items()) or '-'
     risks = '；'.join(s.get('risks') or ['-']); actions = '；'.join(s.get('actions') or ['-'])
-    return f"<tr data-level='{_e(s['effect_level'])}'><td>{i}</td><td>{_e(s['source_name'])}</td><td><a href='{_e(s['video_url'])}' target='_blank'>{_e(s['video_id'])}</a></td><td>{s['effect_score']}</td><td>{_e(s['effect_level'])}</td><td>{s['production_quality_score']}</td><td>{s['interaction_signal_score']}</td><td>{s['comment_conversion_score']}</td><td>{_e(topics)}</td><td>{_e(risks)}</td><td>{_e(actions)}</td></tr>"
+    return f"<tr data-level='{_e(s['effect_level'])}'><td>{i}</td><td>{_e(s['source_name'])}</td><td><a href='{_e(s['video_url'])}' target='_blank'>{_e(s['video_id'])}</a></td><td>{s['effect_score']}</td><td>{_e(s['effect_level'])}</td><td>{s['production_quality_score']}</td><td>{s['content_structure_score']}</td><td>{s['comment_potential_score']}</td><td>{_e(topics)}</td><td>{_e(risks)}</td><td>{_e(actions)}</td></tr>"
 def _usage_section() -> str:
     return f"<section><h2>6. 视频评价器使用方式</h2><pre>py -3.11 tools/evaluate_video_effect.py --model artifacts/analysis/video_effect_model.json --input your_video_features.json</pre><p>打包文件位于 deliverables/20260428_video_effect_evaluator_bundle.zip，包含模型 JSON、全量评分 JSON、HTML 报告和评价 CLI。</p></section>"
 def _write_bundle() -> Path:
@@ -123,3 +123,4 @@ def _card(label: str, value: Any) -> str: return f"<div class='card'><div>{_e(la
 def _avg(values: list[float]) -> float: return sum(values)/len(values) if values else 0.0
 def _e(value: Any) -> str: return html.escape(str(value), quote=True)
 if __name__ == "__main__": raise SystemExit(main())
+

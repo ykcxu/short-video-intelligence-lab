@@ -12,6 +12,7 @@ class VideoEffectEvaluatorTestCase(unittest.TestCase):
                 "video_url": "https://www.douyin.com/video/a",
                 "metric_suspicious": False,
                 "trusted_engagement_score": 100,
+                "planned_title": "PET考试资料怎么领取？三步备考方法",
                 "comment_count": 10,
                 "fit_score": 75,
                 "ocr_readability": 0.8,
@@ -43,11 +44,16 @@ class VideoEffectEvaluatorTestCase(unittest.TestCase):
 
         model = train_effect_model(rows, comments)
         result = score_video(rows[0], comments["a"], model)
+        noisy_row = {**rows[0], "like_count": 999999, "comment_count": 999999, "share_count": 999999}
+        noisy_result = score_video(noisy_row, [{"topics": ["家长咨询"], "sentiment": "咨询", "is_author_reply": True}], model)
 
-        self.assertEqual(model["version"], "video-effect-evaluator.v1")
+        self.assertEqual(model["version"], "video-effect-evaluator.prepublish.v1")
         self.assertGreater(result["effect_score"], 60)
-        self.assertIn("资料领取", result["comment_topics"])
+        self.assertIn("资料领取", result["planned_topics"])
+        self.assertEqual(result["effect_score"], noisy_result["effect_score"])
+        self.assertIn("comments", noisy_result["ignored_runtime_fields"])
 
 
 if __name__ == "__main__":
     unittest.main()
+
