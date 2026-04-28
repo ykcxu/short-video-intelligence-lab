@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
 
 PERSON_VISUAL_VERSION = "person-visual-features.v1"
+POSE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
 
 
 def analyze_person_visual_features_file(
@@ -18,10 +20,13 @@ def analyze_person_visual_features_file(
 ) -> dict[str, Any]:
     resolved_artifact = artifact if artifact.is_absolute() else workspace / artifact
     items = _extract_items(json.loads(resolved_artifact.read_text(encoding="utf-8")))
-    deps = _load_dependencies()
+    deps = _load_dependencies(workspace)
     if not deps["ok"]:
         return _write_missing_result(workspace, output, resolved_artifact, deps)
-    results = [_analyze_item(workspace=workspace, item=item, deps=deps) for item in items]
+    try:
+        results = [_analyze_item(workspace=workspace, item=item, deps=deps) for item in items]
+    finally:
+        _close_pose_landmarker(deps)
     feature_root = _resolve_features_dir(workspace=workspace, features_dir=features_dir)
     for item in results:
         _merge_feature_file(feature_root=feature_root, item=item)
@@ -50,12 +55,35 @@ def _analyze_frame(*, frame: Path, deps: Mapping[str, Any]) -> dict[str, Any]:
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
     faces = deps["face_detector"].detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
     people, _weights = deps["person_detector"].detectMultiScale(image_bgr, winStride=(8, 8), padding=(8, 8), scale=1.05)
-    return {"ok": True, "width": width, "height": height, "faces": [_rect_box(rect, width, height) for rect in faces], "people": [_rect_box(rect, width, height) for rect in people]}
+    pose = _detect_pose(image_bgr=image_bgr, deps=deps)
+    return {"ok": True, "width": width, "height": height, "faces": [_rect_box(rect, width, height) for rect in faces], "people": [_rect_box(rect, width, height) for rect in people], "pose": pose}
 
 
 def _rect_box(rect: Any, width: int, height: int) -> dict[str, float]:
     x, y, w, h = [float(value) for value in rect]
     return {"x": x / width, "y": y / height, "w": w / width, "h": h / height, "area": max(0.0, (w / width) * (h / height))}
+
+
+def _detect_pose(*, image_bgr: Any, deps: Mapping[str, Any]) -> dict[str, Any]:
+    landmarker = deps.get("pose_landmarker")
+    if landmarker is None:
+        return {"detected": False, "missing_reason": _text(deps.get("pose_error"))}
+    cv2 = deps["cv2"]
+    mp = deps["mediapipe"]
+    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
+    result = landmarker.detect(mp_image)
+    landmarks = result.pose_landmarks[0] if result.pose_landmarks else []
+    return _pose_box(landmarks)
+
+
+def _pose_box(landmarks: list[Any]) -> dict[str, Any]:
+    visible = [lm for lm in landmarks if getattr(lm, "visibility", 1.0) >= 0.45]
+    if not visible:
+        return {"detected": False}
+    xs = [min(1.0, max(0.0, float(lm.x))) for lm in visible]
+    ys = [min(1.0, max(0.0, float(lm.y))) for lm in visible]
+    return {"detected": True, "x": min(xs), "y": min(ys), "w": max(xs) - min(xs), "h": max(ys) - min(ys), "landmark_count": len(visible)}
 
 
 def _build_face_quality(frames: list[Mapping[str, Any]]) -> dict[str, Any]:
@@ -76,14 +104,16 @@ def _build_face_quality(frames: list[Mapping[str, Any]]) -> dict[str, Any]:
 
 
 def _build_pose_quality(frames: list[Mapping[str, Any]]) -> dict[str, Any]:
+    poses = [_as_dict(frame.get("pose")) for frame in frames if _as_dict(frame.get("pose")).get("detected")]
+    best = max(poses, key=lambda pose: _num(pose.get("w")) * _num(pose.get("h")), default={})
+    detected_ratio = len(poses) / max(1, len(frames))
     return {
         "version": PERSON_VISUAL_VERSION,
-        "pose_detected": False,
-        "facing_camera_score": 0.0,
-        "upper_body_visible": False,
-        "gesture_activity_score": 0.0,
-        "stability_score": 0.0,
-        "missing_reason": "当前环境未接入姿态关键点模型，避免用人物框伪造姿态。",
+        "pose_detected": bool(poses),
+        "facing_camera_score": round(min(1.0, _num(best.get("landmark_count")) / 25.0), 3),
+        "upper_body_visible": _num(best.get("landmark_count")) >= 10,
+        "gesture_activity_score": round(min(1.0, (_num(best.get("w")) + _num(best.get("h"))) / 1.2), 3),
+        "stability_score": round(detected_ratio, 3),
     }
 
 
@@ -170,16 +200,46 @@ def _write_missing_result(workspace: Path, output: Path | None, artifact: Path, 
     return result
 
 
-def _load_dependencies() -> dict[str, Any]:
+def _load_dependencies(workspace: Path) -> dict[str, Any]:
     try:
         import cv2  # type: ignore
+        import mediapipe as mp  # type: ignore
     except ImportError as exc:
         return {"ok": False, "errors": [str(exc)]}
     face_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
     face_detector = cv2.CascadeClassifier(face_path)
     person_detector = cv2.HOGDescriptor()
     person_detector.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-    return {"ok": True, "cv2": cv2, "face_detector": face_detector, "person_detector": person_detector}
+    deps = {"ok": True, "cv2": cv2, "mediapipe": mp, "face_detector": face_detector, "person_detector": person_detector}
+    deps.update(_create_pose_landmarker(workspace=workspace, mp=mp))
+    return deps
+
+
+def _create_pose_landmarker(*, workspace: Path, mp: Any) -> dict[str, Any]:
+    try:
+        model_path = _ensure_pose_model(workspace)
+        options = mp.tasks.vision.PoseLandmarkerOptions(
+            base_options=mp.tasks.BaseOptions(model_asset_path=str(model_path)),
+            running_mode=mp.tasks.vision.RunningMode.IMAGE,
+            num_poses=1,
+        )
+        return {"pose_landmarker": mp.tasks.vision.PoseLandmarker.create_from_options(options)}
+    except Exception as exc:  # noqa: BLE001
+        return {"pose_landmarker": None, "pose_error": str(exc)}
+
+
+def _ensure_pose_model(workspace: Path) -> Path:
+    model_path = workspace / "artifacts" / "models" / "pose_landmarker_lite.task"
+    if not model_path.exists() or model_path.stat().st_size == 0:
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        urllib.request.urlretrieve(POSE_MODEL_URL, model_path)
+    return model_path
+
+
+def _close_pose_landmarker(deps: Mapping[str, Any]) -> None:
+    landmarker = deps.get("pose_landmarker")
+    if landmarker is not None and hasattr(landmarker, "close"):
+        landmarker.close()
 
 
 def _resolve_features_dir(*, workspace: Path, features_dir: Path | None) -> Path:

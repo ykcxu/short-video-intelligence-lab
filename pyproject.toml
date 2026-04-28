@@ -26,9 +26,11 @@ multimodal = [
   "faster-whisper>=1.0",
   "easyocr>=1.7",
   "opencv-contrib-python>=4.13",
+  "mediapipe>=0.10",
 ]
 vision-person = [
   "opencv-contrib-python>=4.13",
+  "mediapipe>=0.10",
 ]
 
 [project.scripts]
