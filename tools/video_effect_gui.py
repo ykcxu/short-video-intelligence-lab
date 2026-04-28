@@ -88,6 +88,9 @@ class VideoEffectGui(Tk):
                     "planned_caption": _text_value(self.caption_input),
                     "script_text": _text_value(self.script_input),
                     "work_dir": str(WORK_DIR),
+                    "model_workspace": str(_model_workspace()),
+                    "model_root": str(_model_workspace() / "artifacts" / "models"),
+                    "full_mode": True,
                 }
             )
             model = _load_json(_model_path())
@@ -158,6 +161,11 @@ def _model_path() -> Path:
     return ROOT / "artifacts" / "analysis" / "video_effect_model.json"
 
 
+def _model_workspace() -> Path:
+    """返回模型所在工作区；打包后指向 PyInstaller 解包目录。"""
+    return Path(getattr(sys, "_MEIPASS", ROOT))
+
+
 def _prepare_runtime_path() -> None:
     """把 PyInstaller 解包目录加入 PATH，保证内置 ffmpeg/ffprobe 可被 subprocess 找到。"""
     bundle_dir = Path(getattr(sys, "_MEIPASS", ""))
@@ -202,7 +210,7 @@ def _render_html(*, row: dict, result: dict) -> str:
     <div class="score">{_esc(result.get("effect_score"))}</div>
     <p>等级：{_esc(_level_name(result.get("effect_level")))}</p>
     <p>视频文件：<code>{_esc(row.get("video_url"))}</code></p>
-    <p>说明：本报告只使用视频内容特征与拟发布文本，不使用播放、点赞、评论、转发等上架后数据。</p>
+    <p>说明：本报告只使用视频内容特征、ASR/OCR/人物姿态特征与拟发布文本，不使用播放、点赞、评论、转发等上架后数据。</p>
   </div>
   <div class="card">
     <h2>分项评分</h2>
@@ -238,9 +246,18 @@ def _esc(value: object) -> str:
 
 def _self_test() -> int:
     model_path = _model_path()
-    payload = {"ok": model_path.exists(), "model_path": str(model_path)}
+    model_workspace = _model_workspace()
+    payload = {
+        "ok": model_path.exists(),
+        "model_path": str(model_path),
+        "model_workspace": str(model_workspace),
+        "asr_model_exists": (model_workspace / "artifacts" / "models" / "faster-whisper-tiny" / "model.bin").exists(),
+        "easyocr_model_exists": (model_workspace / "artifacts" / "models" / "easyocr" / "model" / "zh_sim_g2.pth").exists(),
+        "pose_model_exists": (model_workspace / "artifacts" / "models" / "pose_landmarker_lite.task").exists(),
+    }
+    (APP_DIR / "self_test_result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(payload, ensure_ascii=False))
-    return 0 if model_path.exists() else 1
+    return 0 if all(value for key, value in payload.items() if key.endswith("_exists") or key == "ok") else 1
 
 
 if __name__ == "__main__":
