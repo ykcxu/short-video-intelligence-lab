@@ -69,6 +69,20 @@ class ScriptStructureTest(unittest.TestCase):
             self.assertGreater(item["text_length"], 0)
             self.assertTrue(item["script_structure"]["has_method"])
 
+    def test_reads_multimodal_inputs_result_items(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            artifact = workspace / "multimodal_inputs.json"
+            artifact.write_text(
+                json.dumps({"result": {"items": [{"video_id": "v3", "asr_speech": {"transcript": "一个方法解决阅读丢分，比如先看题型，最后收藏关注。"}}]}}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            result = analyze_script_structure_file(workspace=workspace, artifact=artifact)
+
+            self.assertEqual(result["result"]["total"], 1)
+            self.assertEqual(result["result"]["results"][0]["video_id"], "v3")
+
 
 if __name__ == "__main__":
     unittest.main()

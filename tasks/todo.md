@@ -40,9 +40,9 @@
 - [ ] P0-3 完成下载/detail 覆盖对齐
   - 当前问题：补采下载状态显示 `希望学小学`、`紫一老师讲剑桥` 仍需刷新数据集。
   - 验收：`backfill_download_status.needs_dataset_refresh_count = 0`。
-- [ ] P0-4 评论补采继续小批次推进
+- [x] P0-4 评论补采继续小批次推进
   - 当前问题：待补评论目标 `532`，其中 `493` 条没有任何评论产物；当前缺少正式批量补采入口。
-  - 验收：新增可 dry-run/可重试/可记录日志的批量补采工具；每批结束重算 `comment_backfill_targets.json`。
+  - 验收：已新增 `tools/run_comment_backfill_batch.py`，支持 dry-run、小批次、重试、JSON 摘要和日志；当前待补目标已下降到 `277`。
 - [x] P0-5 评论补采命中率诊断
   - 当前问题：修复后新跑 20 条，多数产物真实评论为 0，需要区分无评论、页面未展开、登录/风控、接口无响应。
   - 验收：已新增 `tools/build_comment_failure_diagnostics.py`，输出 `artifacts/status/comment_failure_diagnostics.{json,md}`；当前待补目标 532 条中 `missing_artifact=493`、`noise_only=33`、`empty_response=6`。
@@ -55,11 +55,11 @@
   - 验收：一键流水线能刷新数据集、严格池、下载状态、评论状态、运行摘要。已通过 `phase1_pipeline_with_comment_status_20260427.out.log` 验证。
 - [x] P1-3 更新运行总览 `run_summary`
   - 加入评论待补目标、真实评论命中、最新评论批次日志。已输出到 `artifacts/status/run_summary.{json,md}`。
-- [ ] P1-4 增加 artifact 索引/最近运行历史命令
-  - 验收：能快速看到最近采集批次、错误、账号覆盖。
-- [ ] P1-5 批量评论补采工具
+- [x] P1-4 增加 artifact 索引/最近运行历史命令
+  - 验收：已新增 `tools/build_artifact_index.py`，输出 `artifacts/artifact_index.{json,md}`，能查看最近产物、运行日志和非空错误日志。
+- [x] P1-5 批量评论补采工具
   - 当前问题：`crawl-video-comments` 只支持单视频，批量、limit、retry、log 依赖外层 PowerShell。
-  - 验收：新增 `tools/run_comment_backfill_batch.py`，支持 dry-run、小批次、重试、JSON 摘要和日志。
+  - 验收：已新增 `tools/run_comment_backfill_batch.py`，支持 dry-run、小批次、重试、JSON 摘要和日志。
 
 ## P2：采集能力增强
 
@@ -81,7 +81,7 @@
 - [x] P3-3 视觉/话术特征 MVP
   - 已新增多模态融合评分骨架，先支持人脸/姿态/人物主体/OCR/ASR/话术结构等外部特征接入与可解释融合评分。
   - 已接入 ASR/OCR 抽取命令；当前依赖为可选安装，未安装模型库时显式返回 `missing_dependency`，不伪造转写或字幕。
-  - 后续重型模型抽取器仍按独立子任务推进，避免基础采集链路被依赖安装阻塞。
+  - 已接入人脸、人物主体与姿态关键点检测；新增 `tools/run_multimodal_batch.py` 支持小批量多模态流水线。
 
 ## 可并行子任务拆分
 
