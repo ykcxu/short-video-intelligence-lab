@@ -85,6 +85,9 @@
   - 已新增多模态融合评分骨架，先支持人脸/姿态/人物主体/OCR/ASR/话术结构等外部特征接入与可解释融合评分。
   - 已接入 ASR/OCR 抽取命令；当前依赖为可选安装，未安装模型库时显式返回 `missing_dependency`，不伪造转写或字幕。
   - 已接入人脸、人物主体与姿态关键点检测；新增 `tools/run_multimodal_batch.py` 支持小批量多模态流水线。
+- [x] P3-4 第二轮多模态抽样分析
+  - 已基于严格有效池每账号分层抽样构建 `40` 条多模态输入，并对 `16` 条样本跑通 ASR、OCR、人脸、人物主体、姿态、话术结构和融合评分。
+  - 输出 `artifacts/analysis/second_round/second_round_multimodal_report.md` 和交付包 `deliverables/20260428_second_round_multimodal_bundle.zip`。
 
 ## 可并行子任务拆分
 
