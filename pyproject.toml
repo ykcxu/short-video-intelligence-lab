@@ -32,6 +32,12 @@ vision-person = [
   "opencv-contrib-python>=4.13",
   "mediapipe>=0.10",
 ]
+pdf-report = [
+  "reportlab>=4.4",
+  "pdfplumber>=0.11",
+  "pypdf>=6.10",
+  "pymupdf>=1.27",
+]
 
 [project.scripts]
 short-video-intel = "short_video_intel.cli:main"

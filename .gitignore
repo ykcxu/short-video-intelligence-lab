@@ -40,3 +40,4 @@ cookies/
 config.local.yaml
 state/
 temp_*.py
+tmp/
