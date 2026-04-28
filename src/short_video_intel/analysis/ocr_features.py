@@ -285,7 +285,27 @@ def _dedupe(values: list[str]) -> list[str]:
     return list(dict.fromkeys(item for item in (_clean_line(value) for value in values) if item))
 
 def _clean_line(value: Any) -> str:
-    return re.sub(r"\s+", " ", str(value or "")).strip()
+    repaired = _repair_mojibake(str(value or ""))
+    return re.sub(r"\s+", " ", repaired).strip()
+
+def _repair_mojibake(text: str) -> str:
+    if not text or not _looks_like_latin1_mojibake(text):
+        return text
+    try:
+        repaired = text.encode("latin1").decode("gbk")
+    except UnicodeError:
+        return text
+    return repaired if _chinese_ratio(repaired) > _chinese_ratio(text) else text
+
+def _looks_like_latin1_mojibake(text: str) -> bool:
+    return any("\u00c0" <= char <= "\u00ff" for char in text)
+
+def _chinese_ratio(text: str) -> float:
+    compact = re.sub(r"\s+", "", text)
+    if not compact:
+        return 0.0
+    chinese_count = sum(1 for char in compact if "\u4e00" <= char <= "\u9fff")
+    return chinese_count / len(compact)
 
 def _ratio(part: int, total: int) -> float:
     return round(part / total, 4) if total > 0 else 0.0

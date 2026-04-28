@@ -80,6 +80,18 @@ class OcrFeaturesTest(unittest.TestCase):
             self.assertEqual(result["error_code"], "missing_dependency")
             self.assertIn("missing_dependency", Path(result["output_path"]).read_text(encoding="utf-8"))
 
+    def test_repairs_latin1_gbk_mojibake(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            frame = workspace / "frame_01.jpg"
+            frame.write_bytes(b"fake jpg")
+            item = {"video_id": "v4", "frame_samples": [{"ok": True, "output_path": str(frame)}]}
+            reader = FakeReader({"frame_01.jpg": ["Ïà¶Ô·Ç³£¿Í¹ÛµÄÎªÌ«¼Ò·Ö Îö-ÏÂ"]})
+
+            result = analyze_ocr_features_item(workspace=workspace, item=item, reader=reader)
+
+            self.assertIn("相对非常客观", result["ocr_subtitle"]["text"])
+
 
 if __name__ == "__main__":
     unittest.main()
