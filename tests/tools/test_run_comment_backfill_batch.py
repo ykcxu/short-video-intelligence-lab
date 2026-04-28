@@ -264,6 +264,31 @@ class RunCommentBackfillBatchTestCase(unittest.TestCase):
             self.assertEqual(payload["results"][0]["return_code"], 3)
             self.assertEqual(payload["results"][0]["video_id"], "3333333333")
 
+    def test_main_marks_timed_out_target_as_failure(self) -> None:
+        module = _load_tool_module()
+        with TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            _write_targets(workspace, [{"video_url": "https://www.douyin.com/video/5555555555"}])
+
+            stdout = io.StringIO()
+            with patch.object(module.subprocess, "run", side_effect=module.subprocess.TimeoutExpired(["cmd"], 1)):
+                with redirect_stdout(stdout):
+                    exit_code = module.main(
+                        [
+                            "--workspace",
+                            str(workspace),
+                            "--session-name",
+                            "douyin",
+                            "--per-target-timeout-sec",
+                            "1",
+                        ]
+                    )
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(payload["results"][0]["return_code"], 124)
+            self.assertIn("单视频补采超时", payload["results"][0]["stderr_tail"])
+
     def test_main_handles_none_subprocess_streams(self) -> None:
         module = _load_tool_module()
         with TemporaryDirectory() as temp_dir:

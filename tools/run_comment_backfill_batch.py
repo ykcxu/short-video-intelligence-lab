@@ -54,6 +54,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=None, help="最多执行多少个目标。")
     parser.add_argument("--max-pages", type=int, default=3, help="每个视频最多抓取页数。")
     parser.add_argument("--retry-limit", type=int, default=0, help="失败后的最大重试次数。")
+    parser.add_argument("--per-target-timeout-sec", type=int, default=180, help="单个视频补采最大等待秒数。")
     parser.add_argument("--session-name", required=True, help="浏览器会话名。")
     parser.add_argument("--config", type=Path, default=None, help="CLI 配置文件路径。")
     parser.add_argument("--log-output", type=Path, default=None, help="批处理日志输出路径。")
@@ -109,7 +110,7 @@ def _run_targets(
     _append_log(log_output, f"comment backfill batch started: {datetime.now().isoformat()}\n")
     for index, target in enumerate(targets, start=1):
         command = _build_command(args, workspace, target)
-        result = _run_one_target(command, workspace, target, args.retry_limit)
+        result = _run_one_target(command, workspace, target, args.retry_limit, args.per_target_timeout_sec)
         results.append(result)
         _append_log(log_output, _format_log_entry(index, command, result))
     return results
@@ -120,6 +121,7 @@ def _run_one_target(
     workspace: Path,
     target: dict[str, Any],
     retry_limit: int,
+    timeout_sec: int,
 ) -> dict[str, Any]:
     """执行单个目标；retry_limit 表示失败后的额外重试次数。"""
     attempts = 0
@@ -127,17 +129,24 @@ def _run_one_target(
     max_attempts = max(0, retry_limit) + 1
     while attempts < max_attempts:
         attempts += 1
-        completed = subprocess.run(
+        completed = _run_subprocess(command, workspace, timeout_sec)
+        if completed.returncode == 0:
+            break
+    return _build_result(target, completed, attempts)
+def _run_subprocess(command: list[str], workspace: Path, timeout_sec: int) -> subprocess.CompletedProcess[str]:
+    """带超时运行单视频补采，避免某个页面长期卡死拖垮整批。"""
+    try:
+        return subprocess.run(
             command,
             cwd=workspace,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
+            timeout=max(1, int(timeout_sec)),
         )
-        if completed.returncode == 0:
-            break
-    return _build_result(target, completed, attempts)
+    except subprocess.TimeoutExpired as exc:
+        return subprocess.CompletedProcess(command, 124, stdout=exc.stdout or "", stderr=f"单视频补采超时：{timeout_sec}s")
 
 
 def _build_command(args: argparse.Namespace, workspace: Path, target: dict[str, Any]) -> list[str]:
